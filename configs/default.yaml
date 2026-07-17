@@ -1,0 +1,65 @@
+project:
+  name: event_timeraf_la
+  seed: 42
+  timezone: America/Los_Angeles
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  knowledge_base: data/knowledge_base
+  outputs: outputs
+
+data:
+  start_year: 2019
+  end_year: 2024
+  epa_state_code: "06"
+  epa_county_code: "037"
+  epa_parameter_code: 88101
+  minimum_pm25_coverage: 0.70
+  minimum_weather_coverage: 0.95
+  maximum_fill_gap_hours: 3
+  minimum_event_days: 30
+  minimum_event_overlap_days: 180
+  minimum_event_categories: 2
+  minimum_event_records_per_category: 20
+  noaa_weather_max_distance_km: 80
+
+forecast:
+  lookback: 168
+  horizon: 24
+  split_ratios: [0.70, 0.15, 0.15]
+
+retrieval:
+  k: 8
+  k_values: [1, 4, 8, 16]
+  kb_stride_hours: 24
+  block_size: 256
+  epsilon: 1.0e-6
+  weights:
+    time_series: 0.50
+    weather: 0.20
+    calendar: 0.10
+    event: 0.20
+
+drift:
+  recent_window_hours: 24
+  reference_window_hours: 168
+  threshold_quantile: 0.90
+
+model:
+  n_estimators: 350
+  max_depth: 6
+  learning_rate: 0.05
+  subsample: 0.85
+  colsample_bytree: 0.85
+  reg_lambda: 1.0
+  n_jobs: -1
+
+evaluation:
+  bootstrap_resamples: 500
+  bootstrap_block_hours: 24
+
+tsfm:
+  checkpoint: amazon/chronos-bolt-small
+  batch_size: 64
+  fusion_weights: [0.0, 0.25, 0.5, 0.75, 1.0]

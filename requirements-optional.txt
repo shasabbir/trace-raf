@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Foundation-model publication gate. Kaggle normally provides torch already.
+chronos-forecasting>=2.1,<3
+
