@@ -35,6 +35,7 @@ def generate_explanations(
     events: pd.DataFrame,
     feature_contributions: np.ndarray | None = None,
     contribution_names: list[str] | None = None,
+    validation_residual_mae: np.ndarray | None = None,
 ) -> pd.DataFrame:
     evidence_by_query = {}
     if not retrieval.evidence.empty:
@@ -47,9 +48,17 @@ def generate_explanations(
         delta = forecast_mean - current
         direction = "increase" if delta > 1 else "decrease" if delta < -1 else "remain near the current level"
         driver_names: list[str] = []
+        driver_records: list[dict[str, float | str]] = []
         if feature_contributions is not None and contribution_names:
             order = np.argsort(np.abs(feature_contributions[index]))[::-1][:3]
             driver_names = [contribution_names[position] for position in order]
+            driver_records = [
+                {
+                    "feature": contribution_names[position],
+                    "mean_contribution": float(feature_contributions[index, position]),
+                }
+                for position in order
+            ]
         query_id = metadata["window_id"]
         retrieved_ids = evidence_by_query.get(query_id, [])
         event_ids = _recent_event_ids(events, metadata["origin_time"])
@@ -57,6 +66,20 @@ def generate_explanations(
         drift_reasons = [
             name for name, value in zip(drift.component_names, drift_parts) if value >= 0.5
         ]
+        drift_component_values = {
+            name: float(value) for name, value in zip(drift.component_names, drift_parts)
+        }
+        retrieval_spread = float(np.nanmean(retrieval.spread[index]))
+        validation_mae = (
+            float(np.nanmean(validation_residual_mae))
+            if validation_residual_mae is not None
+            else np.nan
+        )
+        uncertainty_proxy = (
+            float(np.sqrt(retrieval_spread**2 + validation_mae**2))
+            if np.isfinite(retrieval_spread) and np.isfinite(validation_mae)
+            else np.nan
+        )
         sentences = [
             f"The mean 24-hour forecast is expected to {direction} by {abs(delta):.1f} PM2.5 units relative to the latest observation."
         ]
@@ -66,6 +89,11 @@ def generate_explanations(
             sentences.append("The forecast is supported by retrieved historical windows " + ", ".join(retrieved_ids) + ".")
         if event_ids:
             sentences.append("Recent source-recorded event evidence includes " + ", ".join(event_ids) + ".")
+        if np.isfinite(uncertainty_proxy):
+            sentences.append(
+                f"The uncertainty proxy is {uncertainty_proxy:.1f}, combining retrieved-trajectory spread "
+                "with validation residual error."
+            )
         if drift.flag[index]:
             reason = ", ".join(drift_reasons) if drift_reasons else "the composite shift score"
             sentences.append(f"The distribution-shift flag is active because of {reason}; this is an uncertainty warning, not a causal claim.")
@@ -76,9 +104,13 @@ def generate_explanations(
                 "explanation": " ".join(sentences),
                 "retrieved_evidence_ids": json.dumps(retrieved_ids),
                 "event_evidence_ids": json.dumps(event_ids),
+                "top_feature_effects": json.dumps(driver_records),
+                "drift_components": json.dumps(drift_component_values),
+                "retrieval_spread": retrieval_spread,
+                "validation_residual_mae": validation_mae,
+                "uncertainty_proxy": uncertainty_proxy,
                 "drift_score": float(drift.score[index]),
                 "drift_flag": bool(drift.flag[index]),
             }
         )
     return pd.DataFrame(rows)
-

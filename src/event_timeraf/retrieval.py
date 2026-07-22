@@ -92,6 +92,18 @@ class RetrievalResult:
             ]
         ).astype(np.float32)
 
+    def feature_names(self, prefix: str = "retrieval") -> list[str]:
+        horizon = self.prediction.shape[1]
+        return (
+            [f"{prefix}_trajectory_h{step:02d}" for step in range(1, horizon + 1)]
+            + [f"{prefix}_spread_h{step:02d}" for step in range(1, horizon + 1)]
+            + [
+                f"{prefix}_mean_similarity",
+                f"{prefix}_max_similarity",
+                f"{prefix}_candidate_count",
+            ]
+        )
+
 
 def build_knowledge_base(dataset: WindowDataset, cfg: ProjectConfig) -> KnowledgeBase:
     train_indices = np.flatnonzero(dataset.metadata["split"].to_numpy() == "train")
@@ -102,6 +114,14 @@ def build_knowledge_base(dataset: WindowDataset, cfg: ProjectConfig) -> Knowledg
     indices = train_indices[keep]
     if indices.size < cfg.retrieval.k:
         raise ValueError("Knowledge base has fewer candidates than configured k")
+    metadata = dataset.metadata.loc[indices].reset_index(drop=True)
+    if len(metadata) > 1:
+        candidate_end = pd.to_datetime(metadata["target_end"], utc=True).to_numpy()
+        next_input_start = pd.to_datetime(metadata["input_start"], utc=True).to_numpy()[1:]
+        if not (candidate_end[:-1] < next_input_start).all():
+            raise AssertionError(
+                "Knowledge-base windows overlap; increase retrieval.kb_stride_hours"
+            )
     vectors, means, stds = normalize_windows(dataset.x[indices], cfg.retrieval.epsilon)
     return KnowledgeBase(
         x=dataset.x[indices],
@@ -110,7 +130,7 @@ def build_knowledge_base(dataset: WindowDataset, cfg: ProjectConfig) -> Knowledg
         input_mean=means,
         input_std=stds,
         features=dataset.features[indices],
-        metadata=dataset.metadata.loc[indices].reset_index(drop=True),
+        metadata=metadata,
         feature_names=dataset.feature_names,
     )
 
@@ -150,8 +170,8 @@ class HistoricalRetriever:
         method: str = "cosine",
         k: int | None = None,
     ) -> RetrievalResult:
-        if method not in {"random", "cosine", "hybrid"}:
-            raise ValueError("method must be random, cosine, or hybrid")
+        if method not in {"random", "cosine", "hybrid", "hybrid_no_event"}:
+            raise ValueError("method must be random, cosine, hybrid, or hybrid_no_event")
         k = k or self.cfg.retrieval.k
         query_vectors, query_means, query_stds = normalize_windows(queries.x, self.cfg.retrieval.epsilon)
         n_queries = len(queries.metadata)
@@ -165,7 +185,7 @@ class HistoricalRetriever:
         evidence_rows: list[dict] = []
 
         kb_target_end = pd.to_datetime(self.kb.metadata["target_end"], utc=True).to_numpy()
-        query_origins = pd.to_datetime(queries.metadata["origin_time"], utc=True).to_numpy()
+        query_input_starts = pd.to_datetime(queries.metadata["input_start"], utc=True).to_numpy()
         weights = self.cfg.retrieval.weights
 
         for block_start in range(0, n_queries, self.cfg.retrieval.block_size):
@@ -173,23 +193,35 @@ class HistoricalRetriever:
             block_vectors = query_vectors[block_start:block_end]
             raw_ts = block_vectors @ self.kb.vectors.T
             ts_score = np.clip((raw_ts + 1.0) / 2.0, 0, 1)
-            if method == "hybrid":
+            if method in {"hybrid", "hybrid_no_event"}:
                 block_features = queries.features[block_start:block_end]
                 weather = self._context_similarity(block_features, "weather")
                 calendar = self._context_similarity(block_features, "calendar")
-                event = self._context_similarity(block_features, "event")
-                scores = (
-                    weights["time_series"] * ts_score
-                    + weights["weather"] * weather
-                    + weights["calendar"] * calendar
-                    + weights["event"] * event
-                )
+                if method == "hybrid":
+                    event = self._context_similarity(block_features, "event")
+                    scores = (
+                        weights["time_series"] * ts_score
+                        + weights["weather"] * weather
+                        + weights["calendar"] * calendar
+                        + weights["event"] * event
+                    )
+                else:
+                    event = np.zeros_like(ts_score)
+                    denominator = weights["time_series"] + weights["weather"] + weights["calendar"]
+                    scores = (
+                        weights["time_series"] * ts_score
+                        + weights["weather"] * weather
+                        + weights["calendar"] * calendar
+                    ) / denominator
             else:
                 weather = calendar = event = np.zeros_like(ts_score)
                 scores = ts_score.copy()
 
             for local_index, query_index in enumerate(range(block_start, block_end)):
-                eligible = np.flatnonzero(kb_target_end < query_origins[query_index])
+                # The complete candidate input and target must precede the
+                # query lookback. This prevents near-duplicate retrieval from
+                # reusing values already present in the query input.
+                eligible = np.flatnonzero(kb_target_end < query_input_starts[query_index])
                 if eligible.size == 0:
                     continue
                 count = min(k, eligible.size)
@@ -230,9 +262,11 @@ class HistoricalRetriever:
                         {
                             "query_window_id": query_row["window_id"],
                             "query_origin": query_row["origin_time"],
+                            "query_input_start": query_row["input_start"],
                             "method": method,
                             "rank": rank,
                             "candidate_window_id": candidate_row["window_id"],
+                            "candidate_input_start": candidate_row["input_start"],
                             "candidate_origin": candidate_row["origin_time"],
                             "candidate_target_end": candidate_row["target_end"],
                             "total_score": float(total_score),
@@ -261,7 +295,9 @@ def assert_retrieval_causality(evidence: pd.DataFrame) -> None:
     if evidence.empty:
         return
     query = pd.to_datetime(evidence["query_origin"], utc=True)
+    query_input_start = pd.to_datetime(evidence["query_input_start"], utc=True)
     candidate_end = pd.to_datetime(evidence["candidate_target_end"], utc=True)
-    if not (candidate_end < query).all():
-        invalid = evidence.loc[~(candidate_end < query)].head()
+    valid = (candidate_end < query_input_start) & (candidate_end < query)
+    if not valid.all():
+        invalid = evidence.loc[~valid].head()
         raise AssertionError(f"Retrieval leakage detected:\n{invalid}")

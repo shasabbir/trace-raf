@@ -49,7 +49,7 @@ class ForecastConfig:
 class RetrievalConfig:
     k: int = 8
     k_values: tuple[int, ...] = (1, 4, 8, 16)
-    kb_stride_hours: int = 24
+    kb_stride_hours: int = 192
     block_size: int = 256
     epsilon: float = 1e-6
     weights: dict[str, float] = field(
@@ -78,6 +78,7 @@ class ModelConfig:
 class EvaluationConfig:
     bootstrap_resamples: int = 500
     bootstrap_block_hours: int = 24
+    minimum_subset_origins: int = 50
 
 
 @dataclass(frozen=True)
@@ -113,10 +114,18 @@ class ProjectConfig:
             raise ValueError("forecast.split_ratios must all be positive")
         if self.retrieval.k <= 0 or self.retrieval.k > max(self.retrieval.k_values):
             raise ValueError("retrieval.k must be positive and represented by k_values")
+        minimum_stride = self.forecast.lookback + self.forecast.horizon
+        if self.retrieval.kb_stride_hours < minimum_stride:
+            raise ValueError(
+                "retrieval.kb_stride_hours must be at least lookback + horizon "
+                "to prevent overlapping knowledge-base candidates"
+            )
         if abs(sum(self.retrieval.weights.values()) - 1.0) > 1e-9:
             raise ValueError("retrieval weights must sum to 1")
         if not 0 < self.drift.threshold_quantile < 1:
             raise ValueError("drift.threshold_quantile must be between 0 and 1")
+        if self.evaluation.minimum_subset_origins <= 0:
+            raise ValueError("evaluation.minimum_subset_origins must be positive")
 
 
 def _resolve(root: Path, value: str) -> Path:

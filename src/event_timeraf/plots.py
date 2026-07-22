@@ -59,3 +59,50 @@ def plot_horizon_metrics(
         destination.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(destination, dpi=180, bbox_inches="tight")
     return figure
+
+
+def plot_retrieval_diagnostics(evidence: pd.DataFrame, destination: Path | None = None):
+    configure_style()
+    if evidence.empty:
+        raise ValueError("Retrieval evidence is empty")
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    sns.histplot(
+        data=evidence,
+        x="total_score",
+        hue="method",
+        element="step",
+        stat="density",
+        common_norm=False,
+        ax=axes[0],
+    )
+    axes[0].set_title("Retrieved-candidate score distribution")
+    axes[1].scatter(
+        pd.to_datetime(evidence["query_origin"], utc=True),
+        evidence["time_series_score"],
+        s=8,
+        alpha=0.35,
+    )
+    axes[1].set(title="Time-series similarity over origins", xlabel="Query origin", ylabel="Similarity")
+    figure.tight_layout()
+    if destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(destination, dpi=180, bbox_inches="tight")
+    return figure
+
+
+def plot_drift_scores(evidence: pd.DataFrame, destination: Path | None = None):
+    configure_style()
+    if evidence.empty:
+        raise ValueError("Drift evidence is empty")
+    data = evidence.sort_values("origin_time")
+    figure, axis = plt.subplots(figsize=(11, 4.2))
+    axis.plot(pd.to_datetime(data["origin_time"], utc=True), data["drift_score"], linewidth=1)
+    threshold = float(data["drift_threshold"].iloc[0])
+    axis.axhline(threshold, color="#D55E00", linestyle="--", label="Validation threshold")
+    axis.set(title="Composite drift score", xlabel="Forecast origin", ylabel="Drift score")
+    axis.legend()
+    figure.tight_layout()
+    if destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(destination, dpi=180, bbox_inches="tight")
+    return figure

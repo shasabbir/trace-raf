@@ -25,7 +25,9 @@ are ignored by Git. No experimental result is bundled with this repository.
 
 1. Upload this repository or add it as a Kaggle Dataset.
 2. Open `notebooks/01_event_timeraf_kaggle_pipeline.ipynb`.
-3. Set `PROJECT_ROOT` to the writable working copy.
+3. The setup cell locates an attached Kaggle Dataset and copies `configs/` and
+   `src/` to `/kaggle/working/event_timeraf`. Set `PROJECT_ROOT_OVERRIDE` only
+   when automatic discovery is insufficient.
 4. Run the notebook from top to bottom with internet enabled for the first data
    download, or attach a previously prepared `data/raw` cache.
 5. Set `RUN_TSF_MODEL = True` only when internet/model weights and sufficient
@@ -33,6 +35,14 @@ are ignored by Git. No experimental result is bundled with this repository.
 
 Set `REQUIRE_STRICT_EVENT_AVAILABILITY = True` to reject retrospective event
 timestamps and require a cache with genuine publication times.
+
+Keep `FINAL_EXPERIMENT = False` for engineering runs. A final run additionally
+requires `RETRIEVAL_EVIDENCE_REVIEWED = True` and completion of the frozen-TSFM
+gate. Every result table carries a run ID and event-availability mode, and the
+results notebook rejects artifacts that do not match the saved manifest.
+
+Retrieval uses non-overlapping 192-hour knowledge-base records. A candidate's
+complete target must finish before the query's 168-hour lookback begins.
 
 The notebook stops at a data-readiness gate when the official records do not
 satisfy the configured coverage requirements. It never substitutes synthetic

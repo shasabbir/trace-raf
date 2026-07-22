@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
+import joblib
 import numpy as np
+import pandas as pd
 
 from .config import ProjectConfig
 from .windows import WindowDataset
@@ -18,16 +21,17 @@ class DriftResult:
 
 
 class DriftDetector:
-    component_names = (
+    base_component_names = (
         "mean_shift",
         "variance_shift",
         "retrieval_similarity_drop",
         "weather_shift",
-        "event_burst",
     )
 
-    def __init__(self, cfg: ProjectConfig):
+    def __init__(self, cfg: ProjectConfig, include_event_component: bool = True):
         self.cfg = cfg
+        self.include_event_component = include_event_component
+        self.component_names = self.base_component_names + (("event_burst",) if include_event_component else ())
         self.center: np.ndarray | None = None
         self.scale: np.ndarray | None = None
         self.weather_center: np.ndarray | None = None
@@ -46,7 +50,6 @@ class DriftDetector:
         mean168 = dataset.features[:, self._index(dataset, "pm25_roll_mean_168h")]
         std24 = dataset.features[:, self._index(dataset, "pm25_roll_std_24h")]
         std168 = dataset.features[:, self._index(dataset, "pm25_roll_std_168h")]
-        event_burst = dataset.features[:, self._index(dataset, "event_burst_ratio")]
         weather_indices = [i for i, name in enumerate(dataset.feature_names) if name in {
             "weather_temperature_c", "weather_relative_humidity", "weather_pressure_hpa", "weather_wind_speed_ms"
         }]
@@ -61,15 +64,16 @@ class DriftDetector:
         similarity = np.asarray(retrieval_similarity, dtype=float)
         similarity_fill = np.nanmedian(similarity) if np.isfinite(similarity).any() else 0.0
         similarity = np.nan_to_num(similarity, nan=similarity_fill)
-        return np.column_stack(
-            [
-                np.abs(mean24 - mean168),
-                np.abs(np.log((std24 + 1e-6) / (std168 + 1e-6))),
-                1.0 - np.clip(similarity, 0, 1),
-                weather_shift,
-                np.maximum(event_burst, 0),
-            ]
-        )
+        components = [
+            np.abs(mean24 - mean168),
+            np.abs(np.log((std24 + 1e-6) / (std168 + 1e-6))),
+            1.0 - np.clip(similarity, 0, 1),
+            weather_shift,
+        ]
+        if self.include_event_component:
+            event_burst = dataset.features[:, self._index(dataset, "event_burst_ratio")]
+            components.append(np.maximum(event_burst, 0))
+        return np.column_stack(components)
 
     def fit_reference(self, train: WindowDataset, retrieval_similarity: np.ndarray) -> "DriftDetector":
         raw = self._raw(train, retrieval_similarity, fit_weather=True)
@@ -103,3 +107,21 @@ class DriftDetector:
             threshold=self.threshold,
         )
 
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+
+def drift_evidence_frame(
+    dataset: WindowDataset,
+    result: DriftResult,
+    run_id: str,
+) -> pd.DataFrame:
+    frame = dataset.metadata[["window_id", "origin_time", "split"]].copy()
+    frame.insert(0, "run_id", run_id)
+    for index, name in enumerate(result.component_names):
+        frame[f"drift_{name}"] = result.components[:, index]
+    frame["drift_score"] = result.score
+    frame["drift_flag"] = result.flag
+    frame["drift_threshold"] = result.threshold
+    return frame

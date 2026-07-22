@@ -32,7 +32,9 @@ forecast:
 retrieval:
   k: 8
   k_values: [1, 4, 8, 16]
-  kb_stride_hours: 24
+  # One complete 168-hour input plus its 24-hour future. This keeps KB
+  # candidates non-overlapping and supports the strict query embargo.
+  kb_stride_hours: 192
   block_size: 256
   epsilon: 1.0e-6
   weights:
@@ -58,6 +60,7 @@ model:
 evaluation:
   bootstrap_resamples: 500
   bootstrap_block_hours: 24
+  minimum_subset_origins: 50
 
 tsfm:
   checkpoint: amazon/chronos-bolt-small

@@ -30,6 +30,7 @@ def origin_feature_matrix(
     dataset: WindowDataset,
     prefixes: tuple[str, ...],
     extra: np.ndarray | None = None,
+    extra_names: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, list[str]]:
     indices = [i for i, name in enumerate(dataset.feature_names) if name.startswith(prefixes)]
     if not indices:
@@ -39,8 +40,10 @@ def origin_feature_matrix(
     if extra is not None:
         if len(extra) != len(matrix):
             raise ValueError("Extra feature rows do not match dataset")
+        if extra_names is not None and len(extra_names) != extra.shape[1]:
+            raise ValueError("Extra feature names do not match extra feature columns")
         matrix = np.column_stack([matrix, extra])
-        names.extend([f"extra_{i:03d}" for i in range(extra.shape[1])])
+        names.extend(extra_names or [f"extra_{i:03d}" for i in range(extra.shape[1])])
     return matrix.astype(np.float32), names
 
 
@@ -115,10 +118,18 @@ def chronos_forecast(
     from chronos import BaseChronosPipeline
 
     use_cuda = torch.cuda.is_available()
+    supports_bfloat16 = bool(
+        use_cuda
+        and hasattr(torch.cuda, "is_bf16_supported")
+        and torch.cuda.is_bf16_supported()
+    )
+    torch.manual_seed(0)
+    if use_cuda:
+        torch.cuda.manual_seed_all(0)
     pipeline = BaseChronosPipeline.from_pretrained(
         checkpoint,
         device_map="cuda" if use_cuda else "cpu",
-        torch_dtype=torch.bfloat16 if use_cuda else torch.float32,
+        torch_dtype=torch.bfloat16 if supports_bfloat16 else torch.float32,
     )
     means: list[np.ndarray] = []
     lower: list[np.ndarray] = []

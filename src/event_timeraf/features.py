@@ -91,6 +91,7 @@ def add_weather_features(frame: pd.DataFrame) -> pd.DataFrame:
         "wind_speed_ms": "weather_wind_speed_ms",
         "wind_direction_deg": "weather_wind_direction_deg",
         "precipitation_mm": "weather_precipitation_mm",
+        "precipitation_missing": "weather_precipitation_missing_flag",
     }
     result = result.rename(columns=rename)
     result["weather_rain_flag"] = (result["weather_precipitation_mm"] > 0).astype(np.int8)
@@ -108,16 +109,34 @@ def hourly_event_features(index: pd.DatetimeIndex, events: pd.DataFrame) -> pd.D
     output = pd.DataFrame(index=index)
     if events.empty:
         output["event_count_1h"] = 0.0
+        output["event_active_count_1h"] = 0.0
         for category in EVENT_CATEGORIES:
             output[f"event_{category}_1h"] = 0.0
+            output[f"event_{category}_active_1h"] = 0.0
     else:
         usable = events.copy()
         usable["published_hour"] = pd.to_datetime(usable["published_at"], utc=True).dt.floor("h")
+        usable["event_start_hour"] = pd.to_datetime(usable["event_time"], utc=True).dt.floor("h")
+        usable["event_end_hour"] = pd.to_datetime(
+            usable.get("event_end", usable["event_time"]), errors="coerce", utc=True
+        ).dt.ceil("h")
+        usable["event_end_hour"] = usable["event_end_hour"].fillna(usable["event_start_hour"])
         total = usable.groupby("published_hour").size()
         output["event_count_1h"] = total.reindex(index, fill_value=0).astype(float)
+        output["event_active_count_1h"] = 0.0
         for category in EVENT_CATEGORIES:
             counts = usable.loc[usable["category"] == category].groupby("published_hour").size()
             output[f"event_{category}_1h"] = counts.reindex(index, fill_value=0).astype(float)
+            output[f"event_{category}_active_1h"] = 0.0
+
+        for event in usable.itertuples(index=False):
+            active_start = max(event.event_start_hour, event.published_hour)
+            active_end = max(event.event_end_hour, active_start)
+            active = (index >= active_start) & (index <= active_end)
+            output.loc[active, "event_active_count_1h"] += 1.0
+            category_column = f"event_{event.category}_active_1h"
+            if category_column in output:
+                output.loc[active, category_column] += 1.0
 
     for window in (24, 72, 168):
         output[f"event_count_{window}h"] = output["event_count_1h"].rolling(window, min_periods=1).sum()
@@ -159,4 +178,3 @@ def model_feature_columns(frame: pd.DataFrame) -> list[str]:
         for column in frame.columns
         if column.startswith(prefixes) and column not in excluded and pd.api.types.is_numeric_dtype(frame[column])
     ]
-

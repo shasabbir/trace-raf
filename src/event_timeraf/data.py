@@ -5,8 +5,10 @@ import json
 import math
 import platform
 import re
+import subprocess
 import sys
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
@@ -284,7 +286,12 @@ def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
     else:
         frame["wind_direction_deg"] = np.nan
         frame["wind_speed_ms"] = np.nan
-    frame["precipitation_mm"] = _parse_precip(raw["AA1"]) if "AA1" in raw else 0.0
+    frame["precipitation_mm"] = (
+        _parse_precip(raw["AA1"])
+        if "AA1" in raw
+        else pd.Series(np.nan, index=raw.index, dtype=float)
+    )
+    frame["precipitation_reported"] = frame["precipitation_mm"].notna()
     a = 17.625
     b = 243.04
     numerator = np.exp((a * frame["dewpoint_c"]) / (b + frame["dewpoint_c"]))
@@ -299,12 +306,24 @@ def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
             "pressure_hpa": "mean",
             "wind_direction_deg": "mean",
             "wind_speed_ms": "mean",
-            "precipitation_mm": "sum",
+            "precipitation_mm": lambda values: values.sum(min_count=1),
+            "precipitation_reported": "max",
         }
     )
-    for column in hourly.columns:
-        if column != "precipitation_mm":
-            hourly[column] = hourly[column].ffill(limit=cfg.data.maximum_fill_gap_hours)
+    core_columns = [
+        "temperature_c",
+        "relative_humidity",
+        "pressure_hpa",
+        "wind_speed_ms",
+    ]
+    for column in core_columns:
+        observed = hourly[column].notna()
+        hourly[f"{column}_observed"] = observed
+        hourly[column] = hourly[column].ffill(limit=cfg.data.maximum_fill_gap_hours)
+        hourly[f"{column}_filled"] = ~observed & hourly[column].notna()
+    for column in ("dewpoint_c", "wind_direction_deg"):
+        hourly[column] = hourly[column].ffill(limit=cfg.data.maximum_fill_gap_hours)
+    hourly["precipitation_missing"] = ~hourly["precipitation_reported"].fillna(False)
     hourly["precipitation_mm"] = hourly["precipitation_mm"].fillna(0.0)
     hourly["timestamp_local"] = hourly.index.tz_convert(cfg.timezone)
     return hourly.reset_index()
@@ -334,9 +353,12 @@ def select_and_download_noaa_weather(
             raw = download_noaa_weather(cfg, station, force=force)
             weather = prepare_noaa_weather(raw, cfg)
             aligned = weather.set_index("timestamp_utc").reindex(expected_index)
+            raw_columns = [f"{column}_observed" for column in core_columns]
+            raw_coverage = float(aligned[raw_columns].fillna(False).all(axis=1).mean())
             coverage = float(aligned[core_columns].notna().all(axis=1).mean())
             station = station.copy()
-            station["measured_core_coverage"] = coverage
+            station["measured_core_coverage"] = raw_coverage
+            station["usable_core_coverage"] = coverage
             if best is None or coverage > best[0]:
                 best = (coverage, station, raw, weather)
             if coverage >= cfg.data.minimum_weather_coverage:
@@ -497,6 +519,17 @@ def build_data_audit(
         weather[["timestamp_utc", *weather_columns]], on="timestamp_utc", how="left", validate="one_to_one"
     )
     weather_coverage = float(aligned_weather[weather_columns].notna().all(axis=1).mean())
+    raw_weather_columns = [f"{column}_observed" for column in weather_columns]
+    if set(raw_weather_columns).issubset(weather.columns):
+        aligned_raw_weather = pm_timeline.merge(
+            weather[["timestamp_utc", *raw_weather_columns]],
+            on="timestamp_utc",
+            how="left",
+            validate="one_to_one",
+        )
+        raw_weather_coverage = float(aligned_raw_weather[raw_weather_columns].fillna(False).all(axis=1).mean())
+    else:
+        raw_weather_coverage = float("nan")
     event_times = pd.to_datetime(events["event_time"], errors="coerce", utc=True) if not events.empty else pd.Series(dtype="datetime64[ns, UTC]")
     event_days = int(event_times.dt.floor("D").nunique()) if not events.empty else 0
     categories = events["category"].value_counts().to_dict() if not events.empty else {}
@@ -545,6 +578,7 @@ def build_data_audit(
         "weather_station_distance_km": float(weather_station["distance_km"]),
         "pm25_observed_coverage": observed_coverage,
         "weather_complete_coverage": weather_coverage,
+        "weather_raw_complete_coverage": raw_weather_coverage,
         "event_days": event_days,
         "event_overlap_days": event_overlap_days,
         "event_sources": sorted(events["source"].dropna().astype(str).unique()) if not events.empty else [],
@@ -583,20 +617,106 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_run_manifest(cfg: ProjectConfig, artifacts: Iterable[Path] = ()) -> dict:
-    try:
-        import importlib.metadata as metadata
+def _json_safe(value):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
-        packages = {name: metadata.version(name) for name in ("numpy", "pandas", "scikit-learn", "xgboost", "pyarrow")}
+
+def _git_state(root: Path) -> dict[str, str | bool | None]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(["git", "diff", "--quiet"], cwd=root).returncode != 0
+        staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=root).returncode != 0
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return {"commit": commit, "dirty": bool(dirty or staged or untracked), "available": True}
     except Exception:
-        packages = {}
+        return {"commit": None, "dirty": None, "available": False}
+
+
+def write_run_manifest(
+    cfg: ProjectConfig,
+    artifacts: Iterable[Path] = (),
+    *,
+    run_id: str = "unassigned",
+    config_path: Path | None = None,
+    started_at_utc: str | None = None,
+    runtime_seconds: float | None = None,
+    run_options: dict | None = None,
+) -> dict:
+    import importlib.metadata as metadata
+
+    package_names = (
+        "numpy",
+        "pandas",
+        "pyarrow",
+        "scipy",
+        "scikit-learn",
+        "xgboost",
+        "holidays",
+        "matplotlib",
+        "seaborn",
+        "joblib",
+        "torch",
+        "chronos-forecasting",
+    )
+    packages: dict[str, str | None] = {}
+    for name in package_names:
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            packages[name] = None
+
+    config_values = _json_safe(asdict(cfg))
+    config_payload = json.dumps(config_values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    config_digest = (
+        sha256_file(config_path)
+        if config_path is not None and config_path.exists()
+        else hashlib.sha256(config_payload).hexdigest()
+    )
+    unique_artifacts = sorted(
+        {Path(path).resolve() for path in artifacts if Path(path).exists() and Path(path).is_file()},
+        key=str,
+    )
+    artifact_records = {
+        str(path.relative_to(cfg.root) if path.is_relative_to(cfg.root) else path): {
+            "sha256": sha256_file(path),
+            "bytes": path.stat().st_size,
+        }
+        for path in unique_artifacts
+    }
     manifest = {
+        "run_id": run_id,
         "project": cfg.name,
         "seed": cfg.seed,
+        "started_at_utc": started_at_utc,
+        "completed_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+        "runtime_seconds": runtime_seconds,
+        "run_options": run_options or {},
         "python": sys.version,
         "platform": platform.platform(),
         "packages": packages,
-        "artifacts": {str(path): sha256_file(path) for path in artifacts if path.exists() and path.is_file()},
+        "config_path": str(config_path) if config_path else None,
+        "config_sha256": config_digest,
+        "config": config_values,
+        "git": _git_state(cfg.root),
+        "artifacts": artifact_records,
     }
     path = cfg.paths.outputs / "logs" / "run_manifest.json"
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
