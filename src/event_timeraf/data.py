@@ -20,9 +20,13 @@ from .config import ProjectConfig
 
 
 EPA_AIRDATA_URL = "https://aqs.epa.gov/aqsweb/airdata"
-NOAA_ISD_HISTORY_URL = "https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv"
-NOAA_GLOBAL_HOURLY_URL = "https://www.ncei.noaa.gov/data/global-hourly/access"
+# NCEI retired direct ISD/Global Hourly delivery in 2026. These public
+# NOAA Open Data Dissemination (NODD) buckets are the official replacement.
+NOAA_ISD_HISTORY_URL = "https://noaa-isd-pds.s3.amazonaws.com/isd-history.csv"
+NOAA_GLOBAL_HOURLY_URL = "https://noaa-global-hourly-pds.s3.amazonaws.com"
 NOAA_STORM_URL = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles"
+NOAA_STORM_SOURCE_NAME = "NOAA NCEI Storm Events"
+STORM_CACHE_MANIFEST = "source_manifest.json"
 
 
 def download_file(url: str, destination: Path, force: bool = False) -> Path:
@@ -36,13 +40,20 @@ def download_file(url: str, destination: Path, force: bool = False) -> Path:
     headers = {"User-Agent": "Event-TimeRAF/0.1 (academic data pipeline)"}
     if existing:
         headers["Range"] = f"bytes={existing}-"
-    with requests.get(url, stream=True, timeout=(30, 300), headers=headers) as response:
-        response.raise_for_status()
-        append = existing > 0 and response.status_code == 206
-        with temporary.open("ab" if append else "wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
+    try:
+        with requests.get(url, stream=True, timeout=(30, 300), headers=headers) as response:
+            response.raise_for_status()
+            append = existing > 0 and response.status_code == 206
+            with temporary.open("ab" if append else "wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        handle.write(chunk)
+    except requests.RequestException as error:
+        raise RuntimeError(
+            f"Unable to download {url}. Enable Internet in the Kaggle notebook "
+            f"or attach the complete cached file at {destination}. "
+            "FORCE_DOWNLOAD=False reuses existing files but does not disable missing-file downloads."
+        ) from error
     temporary.replace(destination)
     return destination
 
@@ -142,6 +153,7 @@ def prepare_epa_pm25(raw: pd.DataFrame, cfg: ProjectConfig) -> tuple[pd.DataFram
     expected_start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
     expected_end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
     expected_hours = int((expected_end - expected_start) / pd.Timedelta(hours=1))
+    index = pd.date_range(expected_start, expected_end, freq="h", inclusive="left")
     coverage = (
         frame.groupby("site_id")
         .agg(
@@ -157,31 +169,90 @@ def prepare_epa_pm25(raw: pd.DataFrame, cfg: ProjectConfig) -> tuple[pd.DataFram
         .reset_index()
     )
     coverage["coverage"] = coverage["observed_hours"] / expected_hours
+    coverage["aggregation_method"] = "single_monitor"
     coverage = coverage.sort_values(["observed_hours", "site_id"], ascending=[False, True])
     if coverage.empty:
         raise ValueError("No valid EPA PM2.5 measurements remain after cleaning")
-    site_id = str(coverage.iloc[0]["site_id"])
 
-    site = frame.loc[frame["site_id"] == site_id].copy()
-    hourly = (
-        site.groupby("timestamp_utc", as_index=False)
+    aggregate_id = f"{cfg.data.epa_state_code}-{cfg.data.epa_county_code}-COUNTY"
+    aggregate_hourly = (
+        frame.groupby("timestamp_utc", as_index=False)
         .agg(
             pm25_observed=("value", "median"),
-            monitor_count=("POC", "nunique"),
+            monitor_count=("site_id", "nunique"),
             latitude=("Latitude", "median"),
             longitude=("Longitude", "median"),
         )
         .set_index("timestamp_utc")
         .sort_index()
     )
-    index = pd.date_range(expected_start, expected_end, freq="h", inclusive="left")
+    aggregate_observed_hours = int(aggregate_hourly.index.nunique())
+    aggregate_row = pd.DataFrame(
+        [
+            {
+                "site_id": aggregate_id,
+                "observed_hours": aggregate_observed_hours,
+                "source_records": int(len(frame)),
+                "latitude": float(frame["Latitude"].median()),
+                "longitude": float(frame["Longitude"].median()),
+                "first_time": frame["timestamp_utc"].min(),
+                "last_time": frame["timestamp_utc"].max(),
+                "units": " | ".join(sorted(set(frame["Units of Measure"].dropna().astype(str)))),
+                "sample_durations": " | ".join(sorted(set(frame["Sample Duration"].dropna().astype(str)))),
+                "coverage": aggregate_observed_hours / expected_hours,
+                "aggregation_method": "county_hourly_median",
+            }
+        ]
+    )
+
+    if float(coverage.iloc[0]["coverage"]) >= cfg.data.minimum_pm25_coverage:
+        site_id = str(coverage.iloc[0]["site_id"])
+        site = frame.loc[frame["site_id"] == site_id].copy()
+        hourly = (
+            site.groupby("timestamp_utc", as_index=False)
+            .agg(
+                pm25_observed=("value", "median"),
+                monitor_count=("POC", "nunique"),
+                latitude=("Latitude", "median"),
+                longitude=("Longitude", "median"),
+            )
+            .set_index("timestamp_utc")
+            .sort_index()
+        )
+        selected_row = coverage.iloc[[0]]
+    elif float(aggregate_row.iloc[0]["coverage"]) >= cfg.data.minimum_pm25_coverage:
+        site_id = aggregate_id
+        hourly = aggregate_hourly
+        selected_row = aggregate_row
+    else:
+        site_id = str(coverage.iloc[0]["site_id"])
+        site = frame.loc[frame["site_id"] == site_id].copy()
+        hourly = (
+            site.groupby("timestamp_utc", as_index=False)
+            .agg(
+                pm25_observed=("value", "median"),
+                monitor_count=("POC", "nunique"),
+                latitude=("Latitude", "median"),
+                longitude=("Longitude", "median"),
+            )
+            .set_index("timestamp_utc")
+            .sort_index()
+        )
+        selected_row = coverage.iloc[[0]]
+
+    if site_id == aggregate_id:
+        coverage = pd.concat([aggregate_row, coverage], ignore_index=True)
+    else:
+        coverage = pd.concat([selected_row, coverage.drop(selected_row.index), aggregate_row], ignore_index=True)
+
     hourly = hourly.reindex(index)
     hourly.index.name = "timestamp_utc"
     hourly["pm25"] = hourly["pm25_observed"].ffill(limit=cfg.data.maximum_fill_gap_hours)
     hourly["pm25_filled"] = hourly["pm25_observed"].isna() & hourly["pm25"].notna()
     hourly["site_id"] = site_id
-    hourly["latitude"] = hourly["latitude"].fillna(float(coverage.iloc[0]["latitude"]))
-    hourly["longitude"] = hourly["longitude"].fillna(float(coverage.iloc[0]["longitude"]))
+    selected = coverage.iloc[0]
+    hourly["latitude"] = hourly["latitude"].fillna(float(selected["latitude"]))
+    hourly["longitude"] = hourly["longitude"].fillna(float(selected["longitude"]))
     hourly["timestamp_local"] = hourly.index.tz_convert(cfg.timezone)
     return hourly.reset_index(), coverage
 
@@ -323,7 +394,9 @@ def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
         hourly[f"{column}_filled"] = ~observed & hourly[column].notna()
     for column in ("dewpoint_c", "wind_direction_deg"):
         hourly[column] = hourly[column].ffill(limit=cfg.data.maximum_fill_gap_hours)
-    hourly["precipitation_missing"] = ~hourly["precipitation_reported"].fillna(False)
+    precipitation_reported = hourly["precipitation_reported"].fillna(False).astype(bool)
+    hourly["precipitation_reported"] = precipitation_reported
+    hourly["precipitation_missing"] = ~precipitation_reported
     hourly["precipitation_mm"] = hourly["precipitation_mm"].fillna(0.0)
     hourly["timestamp_local"] = hourly.index.tz_convert(cfg.timezone)
     return hourly.reset_index()
@@ -371,8 +444,15 @@ def select_and_download_noaa_weather(
 
 
 def _storm_archive_name(year: int) -> str:
-    response = requests.get(f"{NOAA_STORM_URL}/", timeout=(30, 120))
-    response.raise_for_status()
+    try:
+        response = requests.get(f"{NOAA_STORM_URL}/", timeout=(30, 120))
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "NOAA Storm Events bulk access is unavailable. Attach a hash-verified cache "
+            "of unchanged official NOAA archives and set STORM_EVENTS_CACHE in the "
+            "Kaggle notebook."
+        ) from error
     pattern = re.compile(rf'(StormEvents_details-ftp_v1\.0_d{year}_c\d{{8}}\.csv\.gz)')
     names = sorted(set(pattern.findall(response.text)))
     if not names:
@@ -397,6 +477,168 @@ def _event_category(event_type: str) -> str:
     return "other_weather"
 
 
+def _filter_storm_event_rows(
+    raw: pd.DataFrame,
+    cfg: ProjectConfig,
+    source_year: int | None = None,
+    delivery_mode: str = "ncei_bulk_download",
+    delivery_source: str = NOAA_STORM_URL,
+) -> pd.DataFrame:
+    fips = pd.to_numeric(raw.get("CZ_FIPS"), errors="coerce")
+    cz_type = raw.get("CZ_TYPE", pd.Series("", index=raw.index)).astype(str).str.upper()
+    cz_name = raw.get("CZ_NAME", pd.Series("", index=raw.index)).astype(str).str.upper()
+    state = raw.get("STATE", pd.Series("", index=raw.index)).astype(str).str.upper()
+    if source_year is None:
+        if "YEAR" in raw:
+            years = pd.to_numeric(raw["YEAR"], errors="coerce")
+        elif "BEGIN_YEARMONTH" in raw:
+            years = pd.to_numeric(raw["BEGIN_YEARMONTH"], errors="coerce") // 100
+        else:
+            years = pd.to_datetime(
+                raw.get("BEGIN_DATE_TIME"), errors="coerce", format="mixed", dayfirst=True
+            ).dt.year
+    else:
+        years = pd.Series(source_year, index=raw.index, dtype="Int64")
+    county_fips = int(cfg.data.epa_county_code)
+    study_year = years.between(cfg.data.start_year, cfg.data.end_year)
+    los_angeles = ((cz_type == "C") & (fips == county_fips)) | cz_name.str.contains(
+        "LOS ANGELES", na=False
+    )
+    filtered = raw.loc[(state == "CALIFORNIA") & study_year & los_angeles].copy()
+    filtered["SOURCE_ARCHIVE_YEAR"] = years.loc[filtered.index].astype("Int64")
+    filtered["SOURCE_DELIVERY_MODE"] = delivery_mode
+    filtered["SOURCE_DELIVERY_SOURCE"] = delivery_source
+    return filtered
+
+
+def _verify_official_storm_cache(source: Path, candidates: list[Path]) -> Path:
+    cache_root = source.parent if source.is_file() else source
+    manifests = sorted(cache_root.rglob(STORM_CACHE_MANIFEST))
+    if len(manifests) != 1:
+        raise ValueError(
+            f"An attached Storm Events cache must contain exactly one {STORM_CACHE_MANIFEST}; "
+            f"found {len(manifests)} under {cache_root}. Use the official-cache preparation notebook."
+        )
+    manifest_path = manifests[0]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("source_name") != NOAA_STORM_SOURCE_NAME:
+        raise ValueError(f"Storm cache manifest has an unrecognized source_name: {manifest_path}")
+    if str(manifest.get("official_index_url", "")).rstrip("/") != NOAA_STORM_URL:
+        raise ValueError(f"Storm cache manifest does not identify the official NOAA index: {manifest_path}")
+
+    records = manifest.get("files")
+    if not isinstance(records, list) or not records:
+        raise ValueError(f"Storm cache manifest has no file records: {manifest_path}")
+    records_by_name = {record.get("name"): record for record in records}
+    if len(records_by_name) != len(records):
+        raise ValueError(f"Storm cache manifest contains duplicate file names: {manifest_path}")
+
+    official_archive_name = re.compile(
+        r"StormEvents_details-ftp_v1\.0_d\d{4}_c\d{8}\.csv\.gz"
+    )
+    official_uncompressed_name = re.compile(
+        r"StormEvents_details-ftp_v1\.0_d\d{4}_c\d{8}\.csv"
+    )
+    for candidate in candidates:
+        compressed_candidate = official_archive_name.fullmatch(candidate.name) is not None
+        uncompressed_candidate = official_uncompressed_name.fullmatch(candidate.name) is not None
+        if not compressed_candidate and not uncompressed_candidate:
+            raise ValueError(
+                f"Unverified Storm Events file {candidate.name}. Only unchanged NOAA annual "
+                "detail archives or manifest-verified decompressed CSVs are accepted."
+            )
+        archive_name = candidate.name if compressed_candidate else f"{candidate.name}.gz"
+        record = records_by_name.get(archive_name)
+        if record is None:
+            raise ValueError(f"Storm cache file is absent from {manifest_path}: {archive_name}")
+        expected_url = f"{NOAA_STORM_URL}/{archive_name}"
+        if record.get("url") != expected_url:
+            raise ValueError(f"Storm cache manifest has a non-NOAA URL for {archive_name}")
+        if compressed_candidate:
+            expected_size = record.get("bytes")
+            expected_hash = str(record.get("sha256", "")).lower()
+            hash_label = "SHA-256"
+        else:
+            if record.get("uncompressed_name", candidate.name) != candidate.name:
+                raise ValueError(f"Storm cache manifest decompressed name mismatch for {candidate.name}")
+            expected_size = record.get("uncompressed_bytes")
+            expected_hash = str(record.get("uncompressed_sha256", "")).lower()
+            hash_label = "decompressed SHA-256"
+        if expected_size is None:
+            raise ValueError(
+                f"Storm cache manifest has no size for {candidate.name}. "
+                "Regenerate the official cache with the current preparation notebook."
+            )
+        if int(expected_size) != candidate.stat().st_size:
+            raise ValueError(f"Storm cache size mismatch for {candidate.name}")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+            raise ValueError(
+                f"Storm cache manifest has an invalid {hash_label} for {candidate.name}. "
+                "Regenerate the official cache with the current preparation notebook."
+            )
+        if sha256_file(candidate) != expected_hash:
+            raise ValueError(f"Storm cache {hash_label} mismatch for {candidate.name}")
+    return manifest_path
+
+
+def load_storm_events_cache(path: str | Path, cfg: ProjectConfig) -> pd.DataFrame:
+    """Load manifest-verified official NOAA Storm Events archives or extracted CSVs."""
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(f"Storm Events cache does not exist: {source}")
+    candidates = [source] if source.is_file() else [
+        item
+        for item in source.rglob("*")
+        if item.is_file()
+        and any(part.lower().startswith("stormevents_details") for part in item.parts)
+        and (item.suffix.lower() in {".csv", ".gz", ".parquet"})
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No NOAA StormEvents_details CSV.GZ files found under {source}")
+    manifest_path = _verify_official_storm_cache(source, candidates)
+
+    frames: list[pd.DataFrame] = []
+    required_columns = {
+        "EVENT_ID",
+        "YEAR",
+        "BEGIN_YEARMONTH",
+        "STATE",
+        "CZ_FIPS",
+        "CZ_TYPE",
+        "CZ_NAME",
+        "BEGIN_DATE_TIME",
+        "END_DATE_TIME",
+        "EVENT_TYPE",
+        "EVENT_NARRATIVE",
+    }
+    for candidate in sorted(candidates):
+        year_match = re.search(r"_d(\d{4})_", candidate.name)
+        if year_match and not cfg.data.start_year <= int(year_match.group(1)) <= cfg.data.end_year:
+            continue
+        chunks = pd.read_csv(
+            candidate,
+            chunksize=250_000,
+            low_memory=False,
+            usecols=lambda column: column in required_columns,
+        )
+        for chunk in chunks:
+            filtered = _filter_storm_event_rows(
+                chunk,
+                cfg,
+                source_year=int(year_match.group(1)) if year_match else None,
+                delivery_mode="verified_official_noaa_cache",
+                delivery_source=f"{source} (manifest: {manifest_path})",
+            )
+            if not filtered.empty:
+                frames.append(filtered)
+    if not frames:
+        raise ValueError(
+            f"The attached Storm Events cache has no Los Angeles records for "
+            f"{cfg.data.start_year}-{cfg.data.end_year}"
+        )
+    return pd.concat(frames, ignore_index=True).drop_duplicates("EVENT_ID")
+
+
 def download_storm_events(cfg: ProjectConfig, force: bool = False) -> pd.DataFrame:
     cache_dir = cfg.paths.raw / "noaa_storm_events"
     frames: list[pd.DataFrame] = []
@@ -411,13 +653,7 @@ def download_storm_events(cfg: ProjectConfig, force: bool = False) -> pd.DataFra
         name = _storm_archive_name(year)
         archive = download_file(f"{NOAA_STORM_URL}/{name}", cache_dir / name, force=force)
         raw = pd.read_csv(archive, compression="gzip", low_memory=False)
-        fips = pd.to_numeric(raw.get("CZ_FIPS"), errors="coerce")
-        cz_type = raw.get("CZ_TYPE", pd.Series("", index=raw.index)).astype(str).str.upper()
-        cz_name = raw.get("CZ_NAME", pd.Series("", index=raw.index)).astype(str).str.upper()
-        state = raw.get("STATE", pd.Series("", index=raw.index)).astype(str).str.upper()
-        keep = (state == "CALIFORNIA") & (((cz_type == "C") & (fips == 37)) | cz_name.str.contains("LOS ANGELES"))
-        filtered = raw.loc[keep].copy()
-        filtered["SOURCE_ARCHIVE_YEAR"] = year
+        filtered = _filter_storm_event_rows(raw, cfg, source_year=year)
         filtered.to_parquet(filtered_path, index=False)
         frames.append(filtered)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -426,7 +662,11 @@ def download_storm_events(cfg: ProjectConfig, force: bool = False) -> pd.DataFra
 def prepare_storm_events(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
     if raw.empty:
         return pd.DataFrame(
-            columns=["event_id", "event_time", "event_end", "published_at", "category", "source", "title", "summary"]
+            columns=[
+                "event_id", "event_time", "event_end", "published_at",
+                "category", "source", "delivery_mode", "delivery_source",
+                "title", "summary",
+            ]
         )
     start = pd.to_datetime(raw["BEGIN_DATE_TIME"], errors="coerce", format="mixed", dayfirst=True)
     end = pd.to_datetime(raw["END_DATE_TIME"], errors="coerce", format="mixed", dayfirst=True)
@@ -454,6 +694,12 @@ def prepare_storm_events(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
             "category": raw["EVENT_TYPE"].fillna("Unknown").map(_event_category),
             "source": "NOAA Storm Events",
             "source_url": "https://www.ncei.noaa.gov/stormevents/",
+            "delivery_mode": raw.get(
+                "SOURCE_DELIVERY_MODE", pd.Series("ncei_bulk_download", index=raw.index)
+            ),
+            "delivery_source": raw.get(
+                "SOURCE_DELIVERY_SOURCE", pd.Series(NOAA_STORM_URL, index=raw.index)
+            ),
             "title": raw["EVENT_TYPE"].fillna("NOAA event") + " - " + raw["CZ_NAME"].fillna("Los Angeles"),
             "summary": raw.get("EVENT_NARRATIVE", pd.Series("", index=raw.index)).fillna(""),
         }
@@ -486,6 +732,8 @@ def load_optional_hms_events(path: str | Path, cfg: ProjectConfig) -> pd.DataFra
         frame["coverage_basis"] = "first-to-last event in supplied HMS cache"
     frame["source"] = frame.get("source", "NOAA HMS")
     frame["source_url"] = frame.get("source_url", "https://ospo.noaa.gov/products/land/hms.html")
+    frame["delivery_mode"] = frame.get("delivery_mode", "source_preserving_attached_cache")
+    frame["delivery_source"] = frame.get("delivery_source", str(source))
     return frame.dropna(subset=["event_time", "published_at"]).copy()
 
 
@@ -568,7 +816,9 @@ def build_data_audit(
         },
         "source_terms_note": "Source licenses/terms were not machine-parsed; consult each recorded source page.",
         "selected_epa_site": selected_site_id,
+        "selected_epa_site_aggregation_method": str(selected_site.get("aggregation_method", "single_monitor")),
         "selected_epa_site_observed_hours": int(selected_site["observed_hours"]),
+        "selected_epa_site_coverage": float(selected_site["coverage"]),
         "selected_epa_site_source_records": int(selected_site["source_records"]),
         "pm25_units": units,
         "pm25_sample_durations": str(selected_site.get("sample_durations", "")),
@@ -582,6 +832,18 @@ def build_data_audit(
         "event_days": event_days,
         "event_overlap_days": event_overlap_days,
         "event_sources": sorted(events["source"].dropna().astype(str).unique()) if not events.empty else [],
+        "event_delivery_modes": sorted(
+            events.get("delivery_mode", pd.Series("unspecified", index=events.index))
+            .dropna()
+            .astype(str)
+            .unique()
+        ) if not events.empty else [],
+        "event_delivery_sources": sorted(
+            events.get("delivery_source", pd.Series("unspecified", index=events.index))
+            .dropna()
+            .astype(str)
+            .unique()
+        ) if not events.empty else [],
         "event_availability_assumptions": availability_assumptions,
         "strict_event_availability": strict_event_availability,
         "qualifying_event_categories": qualifying_categories,

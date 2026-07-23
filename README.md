@@ -8,7 +8,8 @@ Kaggle-oriented research implementation for event-aware, retrieval-augmented
 The pipeline uses source-preserving public records:
 
 - US EPA AirData/AQS hourly PM2.5 parameter 88101;
-- NOAA NCEI Global Hourly/ISD weather observations;
+- NOAA NCEI Global Hourly/ISD weather observations delivered through the
+  official NOAA Open Data Dissemination (NODD) public buckets;
 - NOAA Storm Events records;
 - optional NOAA HMS fire/smoke records supplied as a cached table.
 
@@ -28,10 +29,29 @@ are ignored by Git. No experimental result is bundled with this repository.
 3. The setup cell locates an attached Kaggle Dataset and copies `configs/` and
    `src/` to `/kaggle/working/event_timeraf`. Set `PROJECT_ROOT_OVERRIDE` only
    when automatic discovery is insufficient.
-4. Run the notebook from top to bottom with internet enabled for the first data
-   download, or attach a previously prepared `data/raw` cache.
-5. Set `RUN_TSF_MODEL = True` only when internet/model weights and sufficient
+4. Do not use a third-party Storm Events compilation for the final study. If
+   Kaggle cannot reach NCEI HTTPS, run
+   `notebooks/00_prepare_official_noaa_storm_cache.ipynb` locally or in Google
+   Colab. It falls back to NOAA anonymous FTP, then creates a ZIP containing
+   unchanged annual archives and `source_manifest.json`. Upload that ZIP as a
+   private Kaggle Dataset and add it as notebook input.
+5. The main notebook automatically finds and verifies that private cache. Set
+   `STORM_EVENTS_CACHE` only when automatic discovery is insufficient.
+6. Run the notebook from top to bottom with internet enabled for the first EPA
+   and weather download, or attach a previously prepared `data/raw` cache.
+7. Set `RUN_TSF_MODEL = True` only when internet/model weights and sufficient
    runtime are available.
+
+The attached private Dataset is a delivery cache, not a replacement source. The
+loader accepts only NOAA annual filenames listed in the generated official-URL
+manifest and verifies every SHA-256 hash before reading data. If Kaggle expands
+the inner `.csv.gz` archives to `.csv`, the loader verifies those files with the
+manifest's decompressed SHA-256 values. Records remain attributed to NOAA Storm
+Events.
+
+For an event-free engineering run only, set `REQUIRE_EVENTS = False`. This now
+skips Storm Events acquisition completely. Such a run cannot support the
+event-aware experiments or final paper claims.
 
 Set `REQUIRE_STRICT_EVENT_AVAILABILITY = True` to reject retrospective event
 timestamps and require a cache with genuine publication times.
