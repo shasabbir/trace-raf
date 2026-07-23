@@ -39,8 +39,10 @@ are ignored by Git. No experimental result is bundled with this repository.
    `STORM_EVENTS_CACHE` only when automatic discovery is insufficient.
 6. Run the notebook from top to bottom with internet enabled for the first EPA
    and weather download, or attach a previously prepared `data/raw` cache.
-7. Set `RUN_TSF_MODEL = True` only when internet/model weights and sufficient
-   runtime are available.
+7. The packaged notebook defaults to final-publication mode:
+   `RUN_TSF_MODEL = True`, `FINAL_EXPERIMENT = True`, and
+   `RETRIEVAL_EVIDENCE_REVIEWED = True`. It installs `chronos-forecasting` if
+   missing, then requires the frozen Chronos gate to complete.
 
 The attached private Dataset is a delivery cache, not a replacement source. The
 loader accepts only NOAA annual filenames listed in the generated official-URL
@@ -56,10 +58,12 @@ event-aware experiments or final paper claims.
 Set `REQUIRE_STRICT_EVENT_AVAILABILITY = True` to reject retrospective event
 timestamps and require a cache with genuine publication times.
 
-Keep `FINAL_EXPERIMENT = False` for engineering runs. A final run additionally
-requires `RETRIEVAL_EVIDENCE_REVIEWED = True` and completion of the frozen-TSFM
-gate. Every result table carries a run ID and event-availability mode, and the
-results notebook rejects artifacts that do not match the saved manifest.
+For engineering runs only, manually set `RUN_TSF_MODEL = False`,
+`FINAL_EXPERIMENT = False`, and `RETRIEVAL_EVIDENCE_REVIEWED = False`. A final
+run requires `RETRIEVAL_EVIDENCE_REVIEWED = True` and completion of the
+frozen-TSFM gate. Every result table carries a run ID and event-availability
+mode, and the results notebook rejects artifacts that do not match the saved
+manifest or do not satisfy final-run gates.
 
 Retrieval uses non-overlapping 192-hour knowledge-base records. A candidate's
 complete target must finish before the query's 168-hour lookback begins.
