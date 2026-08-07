@@ -4,6 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 venv/
+*.egg-info/
 
 data/raw/*
 data/processed/*
@@ -18,8 +19,26 @@ outputs/*
 paper/*.aux
 paper/*.bbl
 paper/*.blg
+paper/*.fdb_latexmk
+paper/*.fls
 paper/*.log
 paper/*.out
+paper/*.synctex.gz
+paper/*.toc
+paper/*.print.html
 
-event_timeraf_final_run.zip
+# Reproducible local exports and immutable run bundles.
+/event_timeraf_*.zip
 final_run_review/
+verification_outputs/
+submission_test/
+
+# Presentation build intermediates; keep the source and PPTX.
+presentation/assets/
+presentation/preview/
+presentation/~$*.pptx
+presentation/*.pdf
+
+# Local visual-QA renders.
+paper/paper_preview/
+paper/verification_preview/
