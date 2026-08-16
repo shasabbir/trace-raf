@@ -6,6 +6,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from scipy.stats import ks_2samp
 
 from .config import ProjectConfig
 from .windows import WindowDataset
@@ -86,7 +87,10 @@ class DriftDetector:
         if self.center is None or self.scale is None:
             raise RuntimeError("Drift detector reference has not been fitted")
         raw = self._raw(dataset, retrieval_similarity)
-        return np.clip((raw - self.center) / self.scale, 0, 6) / 6.0
+        standardized = (raw - self.center) / self.scale
+        if self.cfg.drift.score_mode == "two_sided":
+            standardized = np.abs(standardized)
+        return np.clip(standardized, 0, 6) / 6.0
 
     def calibrate(self, validation: WindowDataset, retrieval_similarity: np.ndarray) -> float:
         components = self._components(validation, retrieval_similarity)
@@ -102,6 +106,57 @@ class DriftDetector:
         return DriftResult(
             components=components,
             component_names=self.component_names,
+            score=score,
+            flag=score >= self.threshold,
+            threshold=self.threshold,
+        )
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+
+class KSTwoSampleDriftDetector:
+    """Validation-calibrated KS benchmark over each causal PM2.5 lookback."""
+
+    def __init__(self, cfg: ProjectConfig):
+        self.cfg = cfg
+        self.reference: np.ndarray | None = None
+        self.threshold: float | None = None
+
+    def fit_reference(self, train: WindowDataset) -> "KSTwoSampleDriftDetector":
+        # One value per training origin avoids overweighting observations that
+        # appear in many overlapping lookback windows.
+        values = np.asarray(train.x[:, -1], dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            raise ValueError("Cannot fit KS detector on an empty training reference")
+        rng = np.random.default_rng(self.cfg.seed)
+        size = min(values.size, self.cfg.drift.ks_reference_size)
+        self.reference = rng.choice(values, size=size, replace=False)
+        return self
+
+    def _scores(self, dataset: WindowDataset) -> np.ndarray:
+        if self.reference is None:
+            raise RuntimeError("KS detector reference has not been fitted")
+        return np.asarray(
+            [ks_2samp(row, self.reference, method="asymp").statistic for row in dataset.x],
+            dtype=np.float32,
+        )
+
+    def calibrate(self, validation: WindowDataset) -> float:
+        self.threshold = float(
+            np.quantile(self._scores(validation), self.cfg.drift.threshold_quantile)
+        )
+        return self.threshold
+
+    def transform(self, dataset: WindowDataset) -> DriftResult:
+        if self.threshold is None:
+            raise RuntimeError("KS threshold has not been calibrated on validation data")
+        score = self._scores(dataset)
+        return DriftResult(
+            components=score[:, None],
+            component_names=("ks_statistic",),
             score=score,
             flag=score >= self.threshold,
             threshold=self.threshold,

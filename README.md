@@ -65,8 +65,20 @@ frozen-TSFM gate. Every result table carries a run ID and event-availability
 mode, and the results notebook rejects artifacts that do not match the saved
 manifest or do not satisfy final-run gates.
 
-Retrieval uses non-overlapping 192-hour knowledge-base records. A candidate's
-complete target must finish before the query's 168-hour lookback begins.
+The publication-candidate profile uses a 24-hour knowledge-base stride and
+reports 192-, 24-, and 6-hour sensitivity results. Candidate records may overlap
+one another; leakage is prevented per query by requiring every candidate's
+complete target to finish before the query's 168-hour lookback begins.
+
+The primary event-aware path uses normalized event similarity and restricts an
+event-context query to historical event-context candidates when at least `k`
+causally eligible candidates exist. Every fallback and selected-candidate event
+flag is stored in retrieval evidence.
+
+After the final cell completes, download the printed
+`event_timeraf_publication_candidate_<RUN_ID>.zip`. Then attach that ZIP to a
+new Kaggle notebook and run `02_results_and_figures.ipynb` to audit the frozen
+tables without retraining.
 
 The notebook stops at a data-readiness gate when the official records do not
 satisfy the configured coverage requirements. It never substitutes synthetic

@@ -5,9 +5,45 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 
 from .config import ProjectConfig
 from .windows import WindowDataset
+
+
+def hour_month_climatology_forecast(
+    train: WindowDataset,
+    queries: WindowDataset,
+    timezone: str,
+) -> np.ndarray:
+    """Forecast from training-only target-hour and target-month means."""
+    horizon = train.y.shape[1]
+    train_origins = pd.to_datetime(train.metadata["origin_time"], utc=True)
+    query_origins = pd.to_datetime(queries.metadata["origin_time"], utc=True)
+    records: list[pd.DataFrame] = []
+    for step in range(1, horizon + 1):
+        target_time = (train_origins + pd.Timedelta(hours=step)).dt.tz_convert(timezone)
+        records.append(
+            pd.DataFrame(
+                {
+                    "month": target_time.dt.month.to_numpy(),
+                    "hour": target_time.dt.hour.to_numpy(),
+                    "value": train.y[:, step - 1],
+                }
+            )
+        )
+    reference = pd.concat(records, ignore_index=True)
+    group_means = reference.groupby(["month", "hour"])["value"].mean()
+    hour_means = reference.groupby("hour")["value"].mean()
+    global_mean = float(reference["value"].mean())
+    prediction = np.empty((len(queries.x), horizon), dtype=np.float32)
+    for step in range(1, horizon + 1):
+        target_time = (query_origins + pd.Timedelta(hours=step)).dt.tz_convert(timezone)
+        values = []
+        for month, hour in zip(target_time.dt.month, target_time.dt.hour):
+            values.append(group_means.get((month, hour), hour_means.get(hour, global_mean)))
+        prediction[:, step - 1] = np.asarray(values, dtype=np.float32)
+    return prediction
 
 
 def persistence_forecast(x: np.ndarray, horizon: int) -> np.ndarray:
@@ -101,6 +137,60 @@ class DirectXGBForecaster:
 
     def feature_importance(self, horizon: int = 0) -> np.ndarray:
         return np.asarray(self.models[horizon].feature_importances_, dtype=float)
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+
+@dataclass
+class DirectRidgeForecaster:
+    """Regularized linear control using the same direct multi-horizon inputs."""
+
+    cfg: ProjectConfig
+    include_future_calendar: bool = True
+    alpha: float = 10.0
+
+    def __post_init__(self) -> None:
+        self.models: list = []
+        self.feature_names: list[str] = []
+
+    def _matrix(self, origin_features: np.ndarray, future_calendar: np.ndarray, horizon: int) -> np.ndarray:
+        if self.include_future_calendar:
+            return np.column_stack([origin_features, future_calendar[:, horizon, :]]).astype(np.float32)
+        return origin_features.astype(np.float32)
+
+    def fit(
+        self,
+        origin_features: np.ndarray,
+        future_calendar: np.ndarray,
+        targets: np.ndarray,
+        feature_names: list[str] | None = None,
+        calendar_names: tuple[str, ...] | None = None,
+    ) -> "DirectRidgeForecaster":
+        from sklearn.linear_model import Ridge
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        self.models = []
+        for horizon in range(targets.shape[1]):
+            model = make_pipeline(StandardScaler(), Ridge(alpha=self.alpha))
+            model.fit(self._matrix(origin_features, future_calendar, horizon), targets[:, horizon])
+            self.models.append(model)
+        self.feature_names = list(feature_names or [f"feature_{i}" for i in range(origin_features.shape[1])])
+        if self.include_future_calendar:
+            self.feature_names.extend(calendar_names or [f"calendar_{i}" for i in range(future_calendar.shape[2])])
+        return self
+
+    def predict(self, origin_features: np.ndarray, future_calendar: np.ndarray) -> np.ndarray:
+        if not self.models:
+            raise RuntimeError("Model has not been fitted")
+        return np.column_stack(
+            [
+                model.predict(self._matrix(origin_features, future_calendar, horizon))
+                for horizon, model in enumerate(self.models)
+            ]
+        ).astype(np.float32)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

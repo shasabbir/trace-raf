@@ -35,7 +35,7 @@ def generate_explanations(
     events: pd.DataFrame,
     feature_contributions: np.ndarray | None = None,
     contribution_names: list[str] | None = None,
-    validation_residual_mae: np.ndarray | None = None,
+    validation_residual_rmse: np.ndarray | None = None,
 ) -> pd.DataFrame:
     evidence_by_query = {}
     if not retrieval.evidence.empty:
@@ -70,14 +70,14 @@ def generate_explanations(
             name: float(value) for name, value in zip(drift.component_names, drift_parts)
         }
         retrieval_spread = float(np.nanmean(retrieval.spread[index]))
-        validation_mae = (
-            float(np.nanmean(validation_residual_mae))
-            if validation_residual_mae is not None
+        validation_rmse = (
+            float(np.sqrt(np.nanmean(np.square(validation_residual_rmse))))
+            if validation_residual_rmse is not None
             else np.nan
         )
         uncertainty_proxy = (
-            float(np.sqrt(retrieval_spread**2 + validation_mae**2))
-            if np.isfinite(retrieval_spread) and np.isfinite(validation_mae)
+            float(np.sqrt(retrieval_spread**2 + validation_rmse**2))
+            if np.isfinite(retrieval_spread) and np.isfinite(validation_rmse)
             else np.nan
         )
         sentences = [
@@ -92,7 +92,7 @@ def generate_explanations(
         if np.isfinite(uncertainty_proxy):
             sentences.append(
                 f"The uncertainty proxy is {uncertainty_proxy:.1f}, combining retrieved-trajectory spread "
-                "with validation residual error."
+                "with validation residual RMSE."
             )
         if drift.flag[index]:
             reason = ", ".join(drift_reasons) if drift_reasons else "the composite shift score"
@@ -107,7 +107,7 @@ def generate_explanations(
                 "top_feature_effects": json.dumps(driver_records),
                 "drift_components": json.dumps(drift_component_values),
                 "retrieval_spread": retrieval_spread,
-                "validation_residual_mae": validation_mae,
+                "validation_residual_rmse": validation_rmse,
                 "uncertainty_proxy": uncertainty_proxy,
                 "drift_score": float(drift.score[index]),
                 "drift_flag": bool(drift.flag[index]),

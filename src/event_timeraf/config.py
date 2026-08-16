@@ -49,7 +49,12 @@ class ForecastConfig:
 class RetrievalConfig:
     k: int = 8
     k_values: tuple[int, ...] = (1, 4, 8, 16)
-    kb_stride_hours: int = 192
+    kb_stride_hours: int = 24
+    kb_stride_values: tuple[int, ...] = (192, 24, 6)
+    event_weight_values: tuple[float, ...] = (0.0, 0.2, 0.5, 0.8, 1.0)
+    event_context_feature: str = "event_count_72h"
+    event_stratified_fallback: str = "all_eligible"
+    normalize_event_scores: bool = True
     block_size: int = 256
     epsilon: float = 1e-6
     weights: dict[str, float] = field(
@@ -67,6 +72,8 @@ class DriftConfig:
     recent_window_hours: int = 24
     reference_window_hours: int = 168
     threshold_quantile: float = 0.90
+    score_mode: str = "two_sided"
+    ks_reference_size: int = 4096
 
 
 @dataclass(frozen=True)
@@ -77,7 +84,7 @@ class ModelConfig:
 @dataclass(frozen=True)
 class EvaluationConfig:
     bootstrap_resamples: int = 500
-    bootstrap_block_hours: int = 24
+    bootstrap_block_hours: int = 168
     minimum_subset_origins: int = 50
 
 
@@ -114,16 +121,24 @@ class ProjectConfig:
             raise ValueError("forecast.split_ratios must all be positive")
         if self.retrieval.k <= 0 or self.retrieval.k > max(self.retrieval.k_values):
             raise ValueError("retrieval.k must be positive and represented by k_values")
-        minimum_stride = self.forecast.lookback + self.forecast.horizon
-        if self.retrieval.kb_stride_hours < minimum_stride:
-            raise ValueError(
-                "retrieval.kb_stride_hours must be at least lookback + horizon "
-                "to prevent overlapping knowledge-base candidates"
-            )
+        if self.retrieval.kb_stride_hours <= 0:
+            raise ValueError("retrieval.kb_stride_hours must be positive")
+        if self.retrieval.kb_stride_hours not in self.retrieval.kb_stride_values:
+            raise ValueError("retrieval.kb_stride_hours must be represented by kb_stride_values")
+        if any(value <= 0 for value in self.retrieval.kb_stride_values):
+            raise ValueError("retrieval.kb_stride_values must all be positive")
+        if any(not 0 <= value <= 1 for value in self.retrieval.event_weight_values):
+            raise ValueError("retrieval.event_weight_values must be within [0, 1]")
+        if self.retrieval.event_stratified_fallback not in {"all_eligible", "no_result"}:
+            raise ValueError("Unsupported retrieval.event_stratified_fallback")
         if abs(sum(self.retrieval.weights.values()) - 1.0) > 1e-9:
             raise ValueError("retrieval weights must sum to 1")
         if not 0 < self.drift.threshold_quantile < 1:
             raise ValueError("drift.threshold_quantile must be between 0 and 1")
+        if self.drift.score_mode not in {"upper_tail", "two_sided"}:
+            raise ValueError("drift.score_mode must be upper_tail or two_sided")
+        if self.drift.ks_reference_size <= 0:
+            raise ValueError("drift.ks_reference_size must be positive")
         if self.evaluation.minimum_subset_origins <= 0:
             raise ValueError("evaluation.minimum_subset_origins must be positive")
 
@@ -148,6 +163,12 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
     forecast["split_ratios"] = tuple(float(v) for v in forecast["split_ratios"])
     retrieval = dict(raw["retrieval"])
     retrieval["k_values"] = tuple(int(v) for v in retrieval["k_values"])
+    retrieval["kb_stride_values"] = tuple(
+        int(v) for v in retrieval.get("kb_stride_values", [retrieval["kb_stride_hours"]])
+    )
+    retrieval["event_weight_values"] = tuple(
+        float(v) for v in retrieval.get("event_weight_values", [retrieval["weights"]["event"]])
+    )
     tsfm = dict(raw["tsfm"])
     tsfm["fusion_weights"] = tuple(float(v) for v in tsfm["fusion_weights"])
 

@@ -32,9 +32,14 @@ forecast:
 retrieval:
   k: 8
   k_values: [1, 4, 8, 16]
-  # One complete 168-hour input plus its 24-hour future. This keeps KB
-  # candidates non-overlapping and supports the strict query embargo.
-  kb_stride_hours: 192
+  # Candidate-to-candidate overlap is allowed. Leakage is prevented by the
+  # per-query rule candidate_target_end < query_input_start.
+  kb_stride_hours: 24
+  kb_stride_values: [192, 24, 6]
+  event_weight_values: [0.0, 0.2, 0.5, 0.8, 1.0]
+  event_context_feature: event_count_72h
+  event_stratified_fallback: all_eligible
+  normalize_event_scores: true
   block_size: 256
   epsilon: 1.0e-6
   weights:
@@ -47,6 +52,8 @@ drift:
   recent_window_hours: 24
   reference_window_hours: 168
   threshold_quantile: 0.90
+  score_mode: two_sided
+  ks_reference_size: 4096
 
 model:
   n_estimators: 350
@@ -58,8 +65,8 @@ model:
   n_jobs: -1
 
 evaluation:
-  bootstrap_resamples: 500
-  bootstrap_block_hours: 24
+  bootstrap_resamples: 1000
+  bootstrap_block_hours: 168
   minimum_subset_origins: 50
 
 tsfm:
