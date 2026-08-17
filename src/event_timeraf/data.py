@@ -29,6 +29,16 @@ NOAA_STORM_SOURCE_NAME = "NOAA NCEI Storm Events"
 STORM_CACHE_MANIFEST = "source_manifest.json"
 
 
+def study_bounds(cfg: ProjectConfig) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Return the inclusive start and exclusive end of the configured UTC study grid."""
+    start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
+    if cfg.data.study_end_date:
+        end = pd.Timestamp(cfg.data.study_end_date, tz="UTC") + pd.Timedelta(days=1)
+    else:
+        end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
+    return start, end
+
+
 def download_file(url: str, destination: Path, force: bool = False) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() and destination.stat().st_size > 0 and not force:
@@ -150,8 +160,10 @@ def prepare_epa_pm25(raw: pd.DataFrame, cfg: ProjectConfig) -> tuple[pd.DataFram
     frame.loc[frame["value"] < 0, "value"] = np.nan
     frame = frame.dropna(subset=["timestamp_utc", "value", "site_id"])
 
-    expected_start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
-    expected_end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
+    expected_start, expected_end = study_bounds(cfg)
+    frame = frame.loc[
+        (frame["timestamp_utc"] >= expected_start) & (frame["timestamp_utc"] < expected_end)
+    ]
     expected_hours = int((expected_end - expected_start) / pd.Timedelta(hours=1))
     index = pd.date_range(expected_start, expected_end, freq="h", inclusive="left")
     coverage = (
@@ -288,8 +300,10 @@ def prepare_epa_site_pm25(
     if site.empty:
         raise ValueError(f"No valid EPA PM2.5 measurements found for site {site_id}")
 
-    expected_start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
-    expected_end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
+    expected_start, expected_end = study_bounds(cfg)
+    site = site.loc[
+        (site["timestamp_utc"] >= expected_start) & (site["timestamp_utc"] < expected_end)
+    ]
     index = pd.date_range(expected_start, expected_end, freq="h", inclusive="left")
     hourly = (
         site.groupby("timestamp_utc", as_index=False)
@@ -359,11 +373,15 @@ def noaa_station_candidates(
     inventory["BEGIN_DATE"] = pd.to_datetime(inventory["BEGIN"], format="%Y%m%d", errors="coerce")
     inventory["END_DATE"] = pd.to_datetime(inventory["END"], format="%Y%m%d", errors="coerce")
     start = pd.Timestamp(f"{cfg.data.start_year}-01-01")
-    end = pd.Timestamp(f"{cfg.data.end_year}-12-31")
+    # ISD history can lag the annual files and often records the latest observed
+    # day rather than a station-closing date. Require overlap into the final
+    # study year here; select_and_download_noaa_weather applies the stronger
+    # measured-coverage gate to the downloaded hourly records.
+    final_year_start = pd.Timestamp(f"{cfg.data.end_year}-01-01")
     eligible = inventory.loc[
         (inventory["CTRY"] == "US")
         & (inventory["BEGIN_DATE"] <= start)
-        & (inventory["END_DATE"] >= end)
+        & (inventory["END_DATE"] >= final_year_start)
         & inventory["LAT"].notna()
         & inventory["LON"].notna()
         & inventory["ICAO"].notna()
@@ -372,7 +390,10 @@ def noaa_station_candidates(
     eligible["distance_km"] = haversine_km(latitude, longitude, eligible["LAT"], eligible["LON"])
     eligible = eligible.loc[eligible["distance_km"] <= cfg.data.noaa_weather_max_distance_km]
     if eligible.empty:
-        raise ValueError("No NOAA ISD station passes date and distance requirements")
+        raise ValueError(
+            "No NOAA ISD station begins before the study and overlaps its final year "
+            "within the configured distance."
+        )
     # Airport/field stations are preferred because they usually provide the
     # continuous ASOS/AWOS record required by an hourly forecasting study.
     station_name = eligible["STATION NAME"].astype(str).str.upper()
@@ -471,7 +492,7 @@ def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
         hourly[f"{column}_filled"] = ~observed & hourly[column].notna()
     for column in ("dewpoint_c", "wind_direction_deg"):
         hourly[column] = hourly[column].ffill(limit=cfg.data.maximum_fill_gap_hours)
-    precipitation_reported = hourly["precipitation_reported"].fillna(False).astype(bool)
+    precipitation_reported = hourly["precipitation_reported"].eq(True)
     hourly["precipitation_reported"] = precipitation_reported
     hourly["precipitation_missing"] = ~precipitation_reported
     hourly["precipitation_mm"] = hourly["precipitation_mm"].fillna(0.0)
@@ -488,12 +509,8 @@ def select_and_download_noaa_weather(
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
     """Choose the nearest station that passes measured hourly coverage."""
     candidates = noaa_station_candidates(cfg, latitude, longitude, force=force)
-    expected_index = pd.date_range(
-        pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC"),
-        pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC"),
-        freq="h",
-        inclusive="left",
-    )
+    study_start, study_end = study_bounds(cfg)
+    expected_index = pd.date_range(study_start, study_end, freq="h", inclusive="left")
     core_columns = ["temperature_c", "relative_humidity", "wind_speed_ms", "pressure_hpa"]
     best: tuple[float, pd.Series, pd.DataFrame, pd.DataFrame] | None = None
     failures: list[str] = []
@@ -504,7 +521,7 @@ def select_and_download_noaa_weather(
             weather = prepare_noaa_weather(raw, cfg)
             aligned = weather.set_index("timestamp_utc").reindex(expected_index)
             raw_columns = [f"{column}_observed" for column in core_columns]
-            raw_coverage = float(aligned[raw_columns].fillna(False).all(axis=1).mean())
+            raw_coverage = float(aligned[raw_columns].eq(True).all(axis=1).mean())
             coverage = float(aligned[core_columns].notna().all(axis=1).mean())
             station = station.copy()
             station["measured_core_coverage"] = raw_coverage
@@ -781,6 +798,10 @@ def prepare_storm_events(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
             "summary": raw.get("EVENT_NARRATIVE", pd.Series("", index=raw.index)).fillna(""),
         }
     )
+    study_start, study_end = study_bounds(cfg)
+    events = events.loc[
+        (events["event_time"] >= study_start) & (events["event_time"] < study_end)
+    ]
     return events.dropna(subset=["event_time", "published_at"]).drop_duplicates("event_id").sort_values("event_time")
 
 
@@ -811,6 +832,10 @@ def load_optional_hms_events(path: str | Path, cfg: ProjectConfig) -> pd.DataFra
     frame["source_url"] = frame.get("source_url", "https://ospo.noaa.gov/products/land/hms.html")
     frame["delivery_mode"] = frame.get("delivery_mode", "source_preserving_attached_cache")
     frame["delivery_source"] = frame.get("delivery_source", str(source))
+    study_start, study_end = study_bounds(cfg)
+    frame = frame.loc[
+        (frame["event_time"] >= study_start) & (frame["event_time"] < study_end)
+    ]
     return frame.dropna(subset=["event_time", "published_at"]).copy()
 
 
@@ -852,14 +877,13 @@ def build_data_audit(
             how="left",
             validate="one_to_one",
         )
-        raw_weather_coverage = float(aligned_raw_weather[raw_weather_columns].fillna(False).all(axis=1).mean())
+        raw_weather_coverage = float(aligned_raw_weather[raw_weather_columns].eq(True).all(axis=1).mean())
     else:
         raw_weather_coverage = float("nan")
     event_times = pd.to_datetime(events["event_time"], errors="coerce", utc=True) if not events.empty else pd.Series(dtype="datetime64[ns, UTC]")
     event_days = int(event_times.dt.floor("D").nunique()) if not events.empty else 0
     categories = events["category"].value_counts().to_dict() if not events.empty else {}
-    study_start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
-    study_end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
+    study_start, study_end = study_bounds(cfg)
     event_overlap_days = _event_coverage_days(events, study_start, study_end)
     qualifying_categories = sum(
         count >= cfg.data.minimum_event_records_per_category for count in categories.values()
@@ -883,7 +907,7 @@ def build_data_audit(
         "event_categories": qualifying_categories >= cfg.data.minimum_event_categories,
     }
     audit = {
-        "study_period": [cfg.data.start_year, cfg.data.end_year],
+        "study_period": [study_start.isoformat(), (study_end - pd.Timedelta(hours=1)).isoformat()],
         "epa_parameter_code": cfg.data.epa_parameter_code,
         "audit_generated_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
         "source_urls": {

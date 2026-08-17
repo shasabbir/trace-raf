@@ -1,7 +1,8 @@
 # Event-TimeRAF
 
 Kaggle-oriented research implementation for event-aware, retrieval-augmented
-24-hour PM2.5 forecasting in Los Angeles County over 2019--2025.
+24-hour PM2.5 forecasting in Los Angeles County from 1 January 2019 through
+24 August 2025, the locked common-data endpoint in the official source snapshot.
 
 ## Data
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ class DataConfig:
     end_year: int
     epa_state_code: str
     epa_county_code: str
+    study_end_date: str | None = None
     epa_parameter_code: int = 88101
     minimum_pm25_coverage: float = 0.70
     minimum_weather_coverage: float = 0.95
@@ -139,6 +141,13 @@ class ProjectConfig:
     def validate(self) -> None:
         if self.data.start_year > self.data.end_year:
             raise ValueError("data.start_year must not exceed data.end_year")
+        if self.data.study_end_date is not None:
+            try:
+                study_end = date.fromisoformat(self.data.study_end_date)
+            except ValueError as error:
+                raise ValueError("data.study_end_date must use YYYY-MM-DD format") from error
+            if study_end.year != self.data.end_year:
+                raise ValueError("data.study_end_date must fall within data.end_year")
         if self.forecast.lookback < self.forecast.horizon:
             raise ValueError("forecast.lookback must be at least forecast.horizon")
         if abs(sum(self.forecast.split_ratios) - 1.0) > 1e-9:

@@ -12,6 +12,9 @@ paths:
 data:
   start_year: 2019
   end_year: 2025
+  # Latest common endpoint supported by the downloaded NOAA ISD inventory.
+  # This retains the January 2025 Los Angeles stress episode.
+  study_end_date: "2025-08-24"
   epa_state_code: "06"
   epa_county_code: "037"
   epa_parameter_code: 88101
