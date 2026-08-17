@@ -957,7 +957,7 @@ def write_run_manifest(
         key=str,
     )
     artifact_records = {
-        str(path.relative_to(cfg.root) if path.is_relative_to(cfg.root) else path): {
+        (path.relative_to(cfg.root).as_posix() if path.is_relative_to(cfg.root) else str(path)): {
             "sha256": sha256_file(path),
             "bytes": path.stat().st_size,
         }

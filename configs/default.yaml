@@ -65,9 +65,12 @@ model:
   n_jobs: -1
 
 evaluation:
-  bootstrap_resamples: 1000
+  bootstrap_resamples: 5000
   bootstrap_block_hours: 168
+  dm_hac_lags: 168
   minimum_subset_origins: 50
+  # Operational thresholds applied to each 24-hour forecast mean.
+  aqi_thresholds: [35.4, 55.4]
 
 tsfm:
   checkpoint: amazon/chronos-bolt-small

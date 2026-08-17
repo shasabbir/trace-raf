@@ -83,9 +83,11 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class EvaluationConfig:
-    bootstrap_resamples: int = 500
+    bootstrap_resamples: int = 5000
     bootstrap_block_hours: int = 168
+    dm_hac_lags: int = 168
     minimum_subset_origins: int = 50
+    aqi_thresholds: tuple[float, ...] = (35.4, 55.4)
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,14 @@ class ProjectConfig:
             raise ValueError("drift.ks_reference_size must be positive")
         if self.evaluation.minimum_subset_origins <= 0:
             raise ValueError("evaluation.minimum_subset_origins must be positive")
+        if self.evaluation.bootstrap_resamples < 2000:
+            raise ValueError("evaluation.bootstrap_resamples must be at least 2000 for publication runs")
+        if self.evaluation.bootstrap_block_hours < 168:
+            raise ValueError("evaluation.bootstrap_block_hours must be at least 168")
+        if self.evaluation.dm_hac_lags <= 0:
+            raise ValueError("evaluation.dm_hac_lags must be positive")
+        if any(value <= 0 for value in self.evaluation.aqi_thresholds):
+            raise ValueError("evaluation.aqi_thresholds must all be positive")
 
 
 def _resolve(root: Path, value: str) -> Path:
@@ -171,6 +181,10 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
     )
     tsfm = dict(raw["tsfm"])
     tsfm["fusion_weights"] = tuple(float(v) for v in tsfm["fusion_weights"])
+    evaluation = dict(raw["evaluation"])
+    evaluation["aqi_thresholds"] = tuple(
+        float(v) for v in evaluation.get("aqi_thresholds", (35.4, 55.4))
+    )
 
     cfg = ProjectConfig(
         root=root,
@@ -183,7 +197,7 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
         retrieval=RetrievalConfig(**retrieval),
         drift=DriftConfig(**raw["drift"]),
         model=ModelConfig(params=dict(raw["model"])),
-        evaluation=EvaluationConfig(**raw["evaluation"]),
+        evaluation=EvaluationConfig(**evaluation),
         tsfm=TSFMConfig(**tsfm),
     )
     cfg.validate()

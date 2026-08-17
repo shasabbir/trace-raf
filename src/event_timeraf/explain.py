@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,58 @@ def xgb_local_contributions(model, matrix: np.ndarray) -> np.ndarray:
     import xgboost as xgb
 
     return model.get_booster().predict(xgb.DMatrix(matrix), pred_contribs=True)[:, :-1]
+
+
+def grouped_feature_perturbation(
+    actual: np.ndarray,
+    matrix: np.ndarray,
+    reference_matrix: np.ndarray,
+    feature_names: Sequence[str],
+    groups: Mapping[str, tuple[str, ...]],
+    predict: Callable[[np.ndarray], np.ndarray],
+    seed: int,
+    run_id: str = "unassigned",
+    model: str = "unassigned",
+) -> pd.DataFrame:
+    """Measure validation-set faithfulness by permutation and median deletion."""
+    if matrix.ndim != 2 or reference_matrix.ndim != 2:
+        raise ValueError("Feature matrices must be two-dimensional")
+    if matrix.shape[1] != reference_matrix.shape[1] or matrix.shape[1] != len(feature_names):
+        raise ValueError("Feature matrices and names must have matching columns")
+    baseline_prediction = predict(matrix)
+    if baseline_prediction.shape != actual.shape:
+        raise ValueError("Prediction callback returned an incompatible shape")
+    baseline_mse = float(np.mean((actual - baseline_prediction) ** 2))
+    reference_median = np.nanmedian(reference_matrix, axis=0)
+    rng = np.random.default_rng(seed)
+    rows = []
+    for group, prefixes in groups.items():
+        columns = [
+            index for index, name in enumerate(feature_names)
+            if any(name.startswith(prefix) for prefix in prefixes)
+        ]
+        if not columns:
+            continue
+        order = rng.permutation(len(matrix))
+        permuted = matrix.copy()
+        permuted[:, columns] = permuted[order][:, columns]
+        deleted = matrix.copy()
+        deleted[:, columns] = reference_median[columns]
+        for intervention, changed in (("permutation", permuted), ("median_deletion", deleted)):
+            changed_mse = float(np.mean((actual - predict(changed)) ** 2))
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "model": model,
+                    "feature_group": group,
+                    "intervention": intervention,
+                    "feature_count": len(columns),
+                    "baseline_validation_mse": baseline_mse,
+                    "perturbed_validation_mse": changed_mse,
+                    "mse_increase": changed_mse - baseline_mse,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _recent_event_ids(events: pd.DataFrame, origin: pd.Timestamp, hours: int = 72) -> list[str]:

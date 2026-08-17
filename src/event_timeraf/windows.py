@@ -152,6 +152,78 @@ def assert_window_integrity(dataset: WindowDataset, cfg: ProjectConfig) -> None:
         raise AssertionError("Window splits are not chronological")
 
 
+def window_attrition_table(
+    frame: pd.DataFrame,
+    dataset: WindowDataset,
+    cfg: ProjectConfig,
+    run_id: str = "unassigned",
+) -> pd.DataFrame:
+    """Reconcile hourly coverage with the staged loss of forecast origins."""
+    data = frame.sort_values("timestamp_utc").reset_index(drop=True)
+    lookback = cfg.forecast.lookback
+    horizon = cfg.forecast.horizon
+    origins = np.arange(lookback - 1, len(data) - horizon)
+    train_end, validation_end = _split_labels(len(data), cfg.forecast.split_ratios)
+    target_ends = origins + horizon
+    split_eligible = (
+        ((origins < train_end) & (target_ends < train_end))
+        | ((origins >= train_end) & (origins < validation_end) & (target_ends < validation_end))
+        | (origins >= validation_end)
+    )
+
+    pm_input = data["pm25"].to_numpy(dtype=float)
+    pm_target = data["pm25_observed"].to_numpy(dtype=float)
+    features = data.loc[:, model_feature_columns(data)].to_numpy(dtype=float)
+    calendar = data.loc[:, CALENDAR_FEATURES].to_numpy(dtype=float)
+    complete_input = np.array(
+        [np.isfinite(pm_input[origin - lookback + 1 : origin + 1]).all() for origin in origins]
+    )
+    complete_target = np.array(
+        [np.isfinite(pm_target[origin + 1 : origin + horizon + 1]).all() for origin in origins]
+    )
+    complete_features = np.isfinite(features[origins]).all(axis=1)
+    complete_calendar = np.array(
+        [np.isfinite(calendar[origin + 1 : origin + horizon + 1]).all() for origin in origins]
+    )
+
+    stages = [
+        ("source_hourly_rows", len(data), "Hourly rows in the aligned modeling table"),
+        ("bounded_candidate_origins", len(origins), "Origins with a complete history/future time bound"),
+    ]
+    retained = split_eligible.copy()
+    stages.append(("chronological_split_eligible", int(retained.sum()), "Targets do not cross split boundaries"))
+    for stage, mask, reason in (
+        ("complete_lookback", complete_input, "No missing PM2.5 value in the 168-hour input"),
+        ("complete_observed_target", complete_target, "All 24 target values are directly observed"),
+        ("complete_origin_features", complete_features, "All causal origin features are finite"),
+        ("complete_future_calendar", complete_calendar, "All known-future calendar values are finite"),
+    ):
+        retained &= mask
+        stages.append((stage, int(retained.sum()), reason))
+    stages.append(("retained_windows", len(dataset.x), "WindowDataset rows used by the experiment"))
+    if int(retained.sum()) != len(dataset.x):
+        raise AssertionError("Attrition accounting does not reconcile with WindowDataset")
+
+    rows = []
+    previous = None
+    for order, (stage, count, criterion) in enumerate(stages, start=1):
+        rows.append(
+            {
+                "run_id": run_id,
+                "stage_order": order,
+                "stage": stage,
+                "count": int(count),
+                "removed_since_previous": 0 if previous is None else int(previous - count),
+                "retained_fraction_of_bounded_origins": (
+                    np.nan if len(origins) == 0 or stage == "source_hourly_rows" else count / len(origins)
+                ),
+                "criterion": criterion,
+            }
+        )
+        previous = count
+    return pd.DataFrame(rows)
+
+
 def design_matrix(
     dataset: WindowDataset,
     feature_prefixes: tuple[str, ...],
