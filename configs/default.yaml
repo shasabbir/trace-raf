@@ -11,7 +11,7 @@ paths:
 
 data:
   start_year: 2019
-  end_year: 2024
+  end_year: 2025
   epa_state_code: "06"
   epa_county_code: "037"
   epa_parameter_code: 88101
@@ -35,7 +35,7 @@ retrieval:
   # Candidate-to-candidate overlap is allowed. Leakage is prevented by the
   # per-query rule candidate_target_end < query_input_start.
   kb_stride_hours: 24
-  kb_stride_values: [192, 24, 6]
+  kb_stride_values: [24, 6, 1]
   event_weight_values: [0.0, 0.2, 0.5, 0.8, 1.0]
   event_context_feature: event_count_72h
   event_stratified_fallback: all_eligible
@@ -71,6 +71,24 @@ evaluation:
   minimum_subset_origins: 50
   # Operational thresholds applied to each 24-hour forecast mean.
   aqi_thresholds: [35.4, 55.4]
+  probabilistic_quantiles: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+
+baseline:
+  neural_batch_size: 256
+  neural_max_epochs: 30
+  neural_patience: 5
+  neural_learning_rate: 0.001
+  neural_weight_decay: 0.0001
+  dlinear_moving_average: 25
+  lstm_hidden_size: 64
+  lstm_layers: 2
+  lstm_dropout: 0.1
+  patch_length: 24
+  patch_stride: 12
+  patch_layers: 3
+  patch_d_model: 64
+  patch_heads: 4
+  patch_ffn_dim: 128
 
 tsfm:
   checkpoint: amazon/chronos-bolt-small

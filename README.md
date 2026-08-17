@@ -1,7 +1,7 @@
 # Event-TimeRAF
 
 Kaggle-oriented research implementation for event-aware, retrieval-augmented
-24-hour PM2.5 forecasting in Los Angeles County.
+24-hour PM2.5 forecasting in Los Angeles County over 2019--2025.
 
 ## Data
 
@@ -42,7 +42,8 @@ are ignored by Git. No experimental result is bundled with this repository.
 7. The packaged notebook defaults to final-publication mode:
    `RUN_TSF_MODEL = True`, `FINAL_EXPERIMENT = True`, and
    `RETRIEVAL_EVIDENCE_REVIEWED = True`. It installs `chronos-forecasting` if
-   missing, then requires the frozen Chronos gate to complete.
+   missing, then requires the frozen Chronos gate, journal baselines, and all
+   reviewer-response sensitivity arms to complete.
 
 The attached private Dataset is a delivery cache, not a replacement source. The
 loader accepts only NOAA annual filenames listed in the generated official-URL
@@ -66,9 +67,15 @@ mode, and the results notebook rejects artifacts that do not match the saved
 manifest or do not satisfy final-run gates.
 
 The publication-candidate profile uses a 24-hour knowledge-base stride and
-reports 192-, 24-, and 6-hour sensitivity results. Candidate records may overlap
+reports 1-, 6-, and 24-hour sensitivity results. Candidate records may overlap
 one another; leakage is prevented per query by requiring every candidate's
 complete target to finish before the query's 168-hour lookback begins.
+
+The same run evaluates DLinear, LSTM, PatchTST, LightGBM, ridge, climatology,
+and the registered Event-TimeRAF variants. A separate three-monitor arm compares
+the context XGBoost and event-conditioned retrieval models while holding the
+primary weather covariates fixed; its station-to-monitor distances are recorded
+so it is interpreted as target-construction sensitivity, not spatial validation.
 
 The primary event-aware path uses normalized event similarity and restricts an
 event-context query to historical event-context candidates when at least `k`
@@ -78,7 +85,9 @@ flag is stored in retrieval evidence.
 After the final cell completes, download the printed
 `event_timeraf_publication_candidate_<RUN_ID>.zip`. Then attach that ZIP to a
 new Kaggle notebook and run `02_results_and_figures.ipynb` to audit the frozen
-tables without retraining.
+tables without retraining. Run `03_paper_claim_verification.ipynb` on the same
+ZIP to hash-check the archive and independently recompute every reported metric,
+including the three-monitor sensitivity results.
 
 The notebook stops at a data-readiness gate when the official records do not
 satisfy the configured coverage requirements. It never substitutes synthetic
@@ -92,6 +101,7 @@ $env:PYTHONPATH = "src"
 pytest -q
 ```
 
-Install `requirements-optional.txt` only for the frozen Chronos publication gate.
+Install `requirements-optional.txt` for Chronos, PatchTST, and LightGBM outside
+the self-installing Kaggle notebook.
 
 See `structured_plan.md` for the experiment contract and leakage rules.

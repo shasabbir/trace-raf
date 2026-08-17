@@ -425,3 +425,84 @@ def interval_metrics(
             }
         ]
     )
+
+
+def log_scale_metrics(
+    actual: np.ndarray,
+    predicted: np.ndarray,
+    model: str,
+    run_id: str = "unassigned",
+) -> pd.DataFrame:
+    if actual.shape != predicted.shape:
+        raise ValueError("Actual and prediction arrays must have identical shapes")
+    actual_log = np.log1p(np.clip(actual, 0.0, None))
+    predicted_log = np.log1p(np.clip(predicted, 0.0, None))
+    values = metric_values(actual_log, predicted_log)
+    return pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "model": model,
+                "transform": "log1p_nonnegative",
+                "n_points": int(actual.size),
+                **values,
+            }
+        ]
+    )
+
+
+def quantile_forecast_metrics(
+    actual: np.ndarray,
+    quantile_forecasts: np.ndarray,
+    quantile_levels: tuple[float, ...] | list[float],
+    model: str,
+    run_id: str = "unassigned",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return quantile calibration and a transparent quantile-grid CRPS approximation."""
+    levels = np.asarray(quantile_levels, dtype=float)
+    forecasts = np.asarray(quantile_forecasts, dtype=float)
+    if actual.ndim != 2 or forecasts.shape != (*actual.shape, len(levels)):
+        raise ValueError("Quantile forecasts must have shape [origins, horizon, quantiles]")
+    if np.any(np.diff(levels) <= 0) or levels[0] <= 0 or levels[-1] >= 1:
+        raise ValueError("Quantile levels must be strictly increasing within (0, 1)")
+    if not np.isfinite(forecasts).all() or not np.isfinite(actual).all():
+        raise ValueError("Quantile metric inputs must be finite")
+    monotone = np.maximum.accumulate(forecasts, axis=-1)
+    calibration_rows = []
+    pinball_values = []
+    for index, level in enumerate(levels):
+        prediction = monotone[..., index]
+        residual = actual - prediction
+        pinball = float(np.mean(np.maximum(level * residual, (level - 1.0) * residual)))
+        pinball_values.append(pinball)
+        calibration_rows.append(
+            {
+                "run_id": run_id,
+                "model": model,
+                "quantile": float(level),
+                "empirical_cdf": float(np.mean(actual <= prediction)),
+                "calibration_error": float(np.mean(actual <= prediction) - level),
+                "pinball_loss": pinball,
+                "n_points": int(actual.size),
+            }
+        )
+    losses = np.asarray(pinball_values)
+    interior = np.sum((losses[:-1] + losses[1:]) * np.diff(levels) / 2.0)
+    tail_approximation = levels[0] * losses[0] + (1.0 - levels[-1]) * losses[-1]
+    crps_approximation = float(2.0 * (interior + tail_approximation))
+    summary = pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "model": model,
+                "quantile_grid": ",".join(f"{value:.2f}" for value in levels),
+                "crps_quantile_approximation": crps_approximation,
+                "mean_absolute_calibration_error": float(
+                    np.mean(np.abs([row["calibration_error"] for row in calibration_rows]))
+                ),
+                "monotonicity_correction_fraction": float(np.mean(monotone != forecasts)),
+                "n_points": int(actual.size),
+            }
+        ]
+    )
+    return pd.DataFrame(calibration_rows), summary

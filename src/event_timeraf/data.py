@@ -257,6 +257,83 @@ def prepare_epa_pm25(raw: pd.DataFrame, cfg: ProjectConfig) -> tuple[pd.DataFram
     return hourly.reset_index(), coverage
 
 
+def prepare_epa_site_pm25(
+    raw: pd.DataFrame,
+    site_id: str,
+    cfg: ProjectConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Prepare one named EPA monitor on the study grid for site-level sensitivity."""
+    frame = raw.copy()
+    if "Units of Measure" not in frame:
+        frame["Units of Measure"] = pd.NA
+    if "Sample Duration" not in frame:
+        frame["Sample Duration"] = "not provided by archive"
+    frame["site_id"] = (
+        _normal_code(frame["State Code"], 2)
+        + "-"
+        + _normal_code(frame["County Code"], 3)
+        + "-"
+        + _normal_code(frame["Site Num"], 4)
+    )
+    frame["timestamp_utc"] = pd.to_datetime(
+        frame["Date GMT"].astype(str) + " " + frame["Time GMT"].astype(str),
+        errors="coerce",
+        utc=True,
+    )
+    frame["value"] = pd.to_numeric(frame["Sample Measurement"], errors="coerce")
+    frame.loc[frame["value"] < 0, "value"] = np.nan
+    site = frame.loc[frame["site_id"] == str(site_id)].dropna(
+        subset=["timestamp_utc", "value"]
+    )
+    if site.empty:
+        raise ValueError(f"No valid EPA PM2.5 measurements found for site {site_id}")
+
+    expected_start = pd.Timestamp(f"{cfg.data.start_year}-01-01", tz="UTC")
+    expected_end = pd.Timestamp(f"{cfg.data.end_year + 1}-01-01", tz="UTC")
+    index = pd.date_range(expected_start, expected_end, freq="h", inclusive="left")
+    hourly = (
+        site.groupby("timestamp_utc", as_index=False)
+        .agg(
+            pm25_observed=("value", "median"),
+            monitor_count=("POC", "nunique"),
+            latitude=("Latitude", "median"),
+            longitude=("Longitude", "median"),
+        )
+        .set_index("timestamp_utc")
+        .sort_index()
+        .reindex(index)
+    )
+    latitude = float(site["Latitude"].median())
+    longitude = float(site["Longitude"].median())
+    metadata = pd.DataFrame(
+        [
+            {
+                "site_id": str(site_id),
+                "observed_hours": int(site["timestamp_utc"].nunique()),
+                "source_records": int(len(site)),
+                "latitude": latitude,
+                "longitude": longitude,
+                "first_time": site["timestamp_utc"].min(),
+                "last_time": site["timestamp_utc"].max(),
+                "units": " | ".join(sorted(set(site["Units of Measure"].dropna().astype(str)))),
+                "sample_durations": " | ".join(
+                    sorted(set(site["Sample Duration"].dropna().astype(str)))
+                ),
+                "coverage": float(site["timestamp_utc"].nunique() / len(index)),
+                "aggregation_method": "single_monitor_sensitivity",
+            }
+        ]
+    )
+    hourly.index.name = "timestamp_utc"
+    hourly["pm25"] = hourly["pm25_observed"].ffill(limit=cfg.data.maximum_fill_gap_hours)
+    hourly["pm25_filled"] = hourly["pm25_observed"].isna() & hourly["pm25"].notna()
+    hourly["site_id"] = str(site_id)
+    hourly["latitude"] = hourly["latitude"].fillna(latitude)
+    hourly["longitude"] = hourly["longitude"].fillna(longitude)
+    hourly["timestamp_local"] = hourly.index.tz_convert(cfg.timezone)
+    return hourly.reset_index(), metadata
+
+
 def haversine_km(lat1: float, lon1: float, lat2: Iterable[float], lon2: Iterable[float]) -> np.ndarray:
     lat2_array = np.asarray(lat2, dtype=float)
     lon2_array = np.asarray(lon2, dtype=float)
@@ -936,6 +1013,8 @@ def write_run_manifest(
         "seaborn",
         "joblib",
         "torch",
+        "transformers",
+        "lightgbm",
         "chronos-forecasting",
     )
     packages: dict[str, str | None] = {}

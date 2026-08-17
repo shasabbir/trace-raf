@@ -88,6 +88,29 @@ class EvaluationConfig:
     dm_hac_lags: int = 168
     minimum_subset_origins: int = 50
     aqi_thresholds: tuple[float, ...] = (35.4, 55.4)
+    probabilistic_quantiles: tuple[float, ...] = (
+        0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
+        0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95,
+    )
+
+
+@dataclass(frozen=True)
+class BaselineConfig:
+    neural_batch_size: int = 256
+    neural_max_epochs: int = 30
+    neural_patience: int = 5
+    neural_learning_rate: float = 1e-3
+    neural_weight_decay: float = 1e-4
+    dlinear_moving_average: int = 25
+    lstm_hidden_size: int = 64
+    lstm_layers: int = 2
+    lstm_dropout: float = 0.1
+    patch_length: int = 24
+    patch_stride: int = 12
+    patch_layers: int = 3
+    patch_d_model: int = 64
+    patch_heads: int = 4
+    patch_ffn_dim: int = 128
 
 
 @dataclass(frozen=True)
@@ -110,6 +133,7 @@ class ProjectConfig:
     drift: DriftConfig
     model: ModelConfig
     evaluation: EvaluationConfig
+    baseline: BaselineConfig
     tsfm: TSFMConfig
 
     def validate(self) -> None:
@@ -151,6 +175,40 @@ class ProjectConfig:
             raise ValueError("evaluation.dm_hac_lags must be positive")
         if any(value <= 0 for value in self.evaluation.aqi_thresholds):
             raise ValueError("evaluation.aqi_thresholds must all be positive")
+        quantiles = self.evaluation.probabilistic_quantiles
+        if any(not 0 < value < 1 for value in quantiles) or tuple(sorted(set(quantiles))) != quantiles:
+            raise ValueError("evaluation.probabilistic_quantiles must be unique, sorted, and within (0, 1)")
+        if 0.1 not in quantiles or 0.9 not in quantiles:
+            raise ValueError("evaluation.probabilistic_quantiles must include 0.1 and 0.9")
+        if self.baseline.neural_batch_size <= 0 or self.baseline.neural_max_epochs <= 0:
+            raise ValueError("Neural baseline batch size and epochs must be positive")
+        if self.baseline.neural_patience <= 0:
+            raise ValueError("Neural baseline patience must be positive")
+        if self.baseline.neural_learning_rate <= 0 or self.baseline.neural_weight_decay < 0:
+            raise ValueError("Neural baseline optimizer settings are invalid")
+        if (
+            self.baseline.dlinear_moving_average <= 0
+            or self.baseline.dlinear_moving_average % 2 == 0
+        ):
+            raise ValueError("baseline.dlinear_moving_average must be a positive odd integer")
+        if self.baseline.lstm_hidden_size <= 0 or self.baseline.lstm_layers <= 0:
+            raise ValueError("baseline LSTM dimensions must be positive")
+        if not 0 <= self.baseline.lstm_dropout < 1:
+            raise ValueError("baseline.lstm_dropout must be in [0, 1)")
+        patch_values = (
+            self.baseline.patch_length,
+            self.baseline.patch_stride,
+            self.baseline.patch_layers,
+            self.baseline.patch_d_model,
+            self.baseline.patch_heads,
+            self.baseline.patch_ffn_dim,
+        )
+        if any(value <= 0 for value in patch_values):
+            raise ValueError("PatchTST dimensions must be positive")
+        if self.baseline.patch_d_model % self.baseline.patch_heads:
+            raise ValueError("baseline.patch_d_model must be divisible by baseline.patch_heads")
+        if self.baseline.patch_length > self.forecast.lookback:
+            raise ValueError("baseline.patch_length must not exceed the forecast lookback")
 
 
 def _resolve(root: Path, value: str) -> Path:
@@ -185,6 +243,9 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
     evaluation["aqi_thresholds"] = tuple(
         float(v) for v in evaluation.get("aqi_thresholds", (35.4, 55.4))
     )
+    evaluation["probabilistic_quantiles"] = tuple(
+        float(v) for v in evaluation.get("probabilistic_quantiles", EvaluationConfig().probabilistic_quantiles)
+    )
 
     cfg = ProjectConfig(
         root=root,
@@ -198,6 +259,7 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
         drift=DriftConfig(**raw["drift"]),
         model=ModelConfig(params=dict(raw["model"])),
         evaluation=EvaluationConfig(**evaluation),
+        baseline=BaselineConfig(**raw.get("baseline", {})),
         tsfm=TSFMConfig(**tsfm),
     )
     cfg.validate()
