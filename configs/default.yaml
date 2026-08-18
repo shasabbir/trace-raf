@@ -12,9 +12,9 @@ paths:
 data:
   start_year: 2019
   end_year: 2025
-  # Latest common endpoint supported by the downloaded NOAA ISD inventory.
-  # This retains the January 2025 Los Angeles stress episode.
-  study_end_date: "2025-08-24"
+  # The previous test interval ends on 2025-08-24 and is now used only for
+  # development. Later 2025 observations form a genuinely untouched holdout.
+  study_end_date: "2025-12-31"
   epa_state_code: "06"
   epa_county_code: "037"
   epa_parameter_code: 88101
@@ -31,6 +31,11 @@ forecast:
   lookback: 168
   horizon: 24
   split_ratios: [0.70, 0.15, 0.15]
+  # Explicit UTC boundaries take precedence over split_ratios. The former
+  # publication test interval becomes validation; the final four months of
+  # 2025 are reserved for one final evaluation after the model is frozen.
+  validation_start_date: "2024-08-25"
+  test_start_date: "2025-08-25"
 
 retrieval:
   k: 8

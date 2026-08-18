@@ -261,7 +261,7 @@ class DirectLightGBMForecaster:
 
 @dataclass
 class ConvexForecastEnsemble:
-    """Validation-selected convex blend of two independently fitted forecasters."""
+    """OOF-training-selected convex blend of two independently fitted forecasters."""
 
     first_name: str
     second_name: str

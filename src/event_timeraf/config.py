@@ -45,6 +45,8 @@ class ForecastConfig:
     lookback: int = 168
     horizon: int = 24
     split_ratios: tuple[float, float, float] = (0.70, 0.15, 0.15)
+    validation_start_date: str | None = None
+    test_start_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,32 @@ class ProjectConfig:
             raise ValueError("forecast.split_ratios must sum to 1")
         if any(r <= 0 for r in self.forecast.split_ratios):
             raise ValueError("forecast.split_ratios must all be positive")
+        split_dates = (
+            self.forecast.validation_start_date,
+            self.forecast.test_start_date,
+        )
+        if any(value is not None for value in split_dates):
+            if not all(value is not None for value in split_dates):
+                raise ValueError(
+                    "forecast.validation_start_date and forecast.test_start_date "
+                    "must be configured together"
+                )
+            try:
+                validation_start = date.fromisoformat(self.forecast.validation_start_date or "")
+                test_start = date.fromisoformat(self.forecast.test_start_date or "")
+            except ValueError as error:
+                raise ValueError("forecast split dates must use YYYY-MM-DD format") from error
+            study_start = date(self.data.start_year, 1, 1)
+            study_end = (
+                date.fromisoformat(self.data.study_end_date)
+                if self.data.study_end_date is not None
+                else date(self.data.end_year, 12, 31)
+            )
+            if not study_start < validation_start < test_start <= study_end:
+                raise ValueError(
+                    "forecast split dates must satisfy study_start < validation_start "
+                    "< test_start <= study_end"
+                )
         if self.retrieval.k <= 0 or self.retrieval.k > max(self.retrieval.k_values):
             raise ValueError("retrieval.k must be positive and represented by k_values")
         if self.retrieval.kb_stride_hours <= 0:

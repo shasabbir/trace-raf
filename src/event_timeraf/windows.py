@@ -58,6 +58,21 @@ def _split_labels(n_rows: int, ratios: tuple[float, float, float]) -> tuple[int,
     return train_end, validation_end
 
 
+def _split_boundaries(data: pd.DataFrame, cfg: ProjectConfig) -> tuple[int, int]:
+    validation_start = cfg.forecast.validation_start_date
+    test_start = cfg.forecast.test_start_date
+    if validation_start is None or test_start is None:
+        return _split_labels(len(data), cfg.forecast.split_ratios)
+    timestamps = pd.to_datetime(data["timestamp_utc"], utc=True)
+    validation_time = pd.Timestamp(validation_start, tz="UTC")
+    test_time = pd.Timestamp(test_start, tz="UTC")
+    train_end = int(timestamps.searchsorted(validation_time, side="left"))
+    validation_end = int(timestamps.searchsorted(test_time, side="left"))
+    if not 0 < train_end < validation_end < len(data):
+        raise ValueError("Configured forecast split dates do not produce three non-empty periods")
+    return train_end, validation_end
+
+
 def build_window_dataset(frame: pd.DataFrame, cfg: ProjectConfig) -> WindowDataset:
     data = frame.sort_values("timestamp_utc").reset_index(drop=True).copy()
     timestamps = pd.to_datetime(data["timestamp_utc"], utc=True)
@@ -65,7 +80,7 @@ def build_window_dataset(frame: pd.DataFrame, cfg: ProjectConfig) -> WindowDatas
     horizon = cfg.forecast.horizon
     feature_names = tuple(model_feature_columns(data))
     calendar_names = tuple(CALENDAR_FEATURES)
-    train_end, validation_end = _split_labels(len(data), cfg.forecast.split_ratios)
+    train_end, validation_end = _split_boundaries(data, cfg)
 
     x_rows: list[np.ndarray] = []
     y_rows: list[np.ndarray] = []
@@ -163,7 +178,7 @@ def window_attrition_table(
     lookback = cfg.forecast.lookback
     horizon = cfg.forecast.horizon
     origins = np.arange(lookback - 1, len(data) - horizon)
-    train_end, validation_end = _split_labels(len(data), cfg.forecast.split_ratios)
+    train_end, validation_end = _split_boundaries(data, cfg)
     target_ends = origins + horizon
     split_eligible = (
         ((origins < train_end) & (target_ends < train_end))

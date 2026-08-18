@@ -405,6 +405,7 @@ def exceedance_metrics(
     thresholds: tuple[float, ...] | list[float],
     model: str,
     run_id: str = "unassigned",
+    decision_thresholds: dict[float, float] | None = None,
 ) -> pd.DataFrame:
     """Classify each origin by its observed and forecast 24-hour mean PM2.5."""
     if actual.shape != predicted.shape or actual.ndim != 2:
@@ -414,7 +415,16 @@ def exceedance_metrics(
     rows = []
     for threshold in thresholds:
         observed = actual_mean > threshold
-        forecast = predicted_mean > threshold
+        decision_threshold = (
+            float(decision_thresholds[float(threshold)])
+            if decision_thresholds is not None and float(threshold) in decision_thresholds
+            else float(threshold)
+        )
+        forecast = (
+            predicted_mean > decision_threshold
+            if np.isfinite(decision_threshold)
+            else np.zeros(len(predicted_mean), dtype=bool)
+        )
         tp = int(np.sum(observed & forecast))
         fp = int(np.sum(~observed & forecast))
         fn = int(np.sum(observed & ~forecast))
@@ -437,6 +447,12 @@ def exceedance_metrics(
                 "run_id": run_id,
                 "model": model,
                 "threshold_ug_m3": float(threshold),
+                "forecast_decision_threshold_ug_m3": decision_threshold,
+                "decision_rule": (
+                    "validation_calibrated"
+                    if decision_thresholds is not None
+                    else "physical_threshold"
+                ),
                 "aggregation": f"{actual.shape[1]}h_forecast_mean",
                 "n_origins": len(actual),
                 "observed_exceedances": int(observed.sum()),
@@ -457,6 +473,72 @@ def exceedance_metrics(
                 ),
                 "auroc": auroc,
                 "average_precision": average_precision,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def select_exceedance_decision_thresholds(
+    actual: np.ndarray,
+    predicted: np.ndarray,
+    thresholds: tuple[float, ...] | list[float],
+    model: str,
+    run_id: str = "unassigned",
+) -> pd.DataFrame:
+    """Select model-specific alert cutoffs on validation data by F1 score."""
+    if actual.shape != predicted.shape or actual.ndim != 2:
+        raise ValueError("Actual and prediction arrays must share shape [origins, horizon]")
+    from sklearn.metrics import precision_recall_curve
+
+    actual_mean = np.mean(actual, axis=1)
+    predicted_mean = np.mean(predicted, axis=1)
+    rows = []
+    for threshold in thresholds:
+        observed = actual_mean > threshold
+        if not observed.any() or observed.all():
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "model": model,
+                    "threshold_ug_m3": float(threshold),
+                    "selected_decision_threshold_ug_m3": np.nan,
+                    "validation_exceedances": int(observed.sum()),
+                    "validation_precision": np.nan,
+                    "validation_recall": np.nan,
+                    "validation_f1": np.nan,
+                    "selection_metric": "maximum_f1_then_recall",
+                }
+            )
+            continue
+        precision, recall, candidates = precision_recall_curve(observed, predicted_mean)
+        precision = precision[:-1]
+        recall = recall[:-1]
+        denominator = precision + recall
+        f1 = np.divide(
+            2.0 * precision * recall,
+            denominator,
+            out=np.zeros_like(denominator),
+            where=denominator > 0,
+        )
+        best_f1 = float(np.max(f1))
+        best = np.flatnonzero(np.isclose(f1, best_f1, rtol=0.0, atol=1e-12))
+        best_recall = np.max(recall[best])
+        best = best[np.isclose(recall[best], best_recall, rtol=0.0, atol=1e-12)]
+        selected = int(best[np.argmax(precision[best])])
+        # exceedance_metrics uses a strict greater-than comparison; moving one
+        # floating-point step lower reproduces sklearn's inclusive threshold.
+        decision_threshold = float(np.nextafter(candidates[selected], -np.inf))
+        rows.append(
+            {
+                "run_id": run_id,
+                "model": model,
+                "threshold_ug_m3": float(threshold),
+                "selected_decision_threshold_ug_m3": decision_threshold,
+                "validation_exceedances": int(observed.sum()),
+                "validation_precision": float(precision[selected]),
+                "validation_recall": float(recall[selected]),
+                "validation_f1": best_f1,
+                "selection_metric": "maximum_f1_then_recall",
             }
         )
     return pd.DataFrame(rows)

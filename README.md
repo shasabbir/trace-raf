@@ -2,7 +2,11 @@
 
 Kaggle-oriented research implementation for event-aware, retrieval-augmented
 24-hour PM2.5 forecasting in Los Angeles County from 1 January 2019 through
-24 August 2025, the locked common-data endpoint in the official source snapshot.
+31 December 2025. Model development ends on 24 August 2025; observations from
+25 August onward form the explicit final holdout and are excluded from model
+and hyperparameter selection. January 2025 is reported separately as a
+development-stress analysis because it belongs to validation; it must not be
+described as final-holdout evidence.
 
 The proposed model is **TRACE-RAF**: Trust-gated Residual Analog Correction for
 Event-aware Retrieval-Augmented Forecasting. It retains Event-TimeRAF's audited
@@ -73,10 +77,13 @@ frozen-TSFM gate. Every result table carries a run ID and event-availability
 mode, and the results notebook rejects artifacts that do not match the saved
 manifest or do not satisfy final-run gates.
 
-The publication-candidate profile uses a 24-hour knowledge-base stride and
-reports 1-, 6-, and 24-hour sensitivity results. Candidate records may overlap
-one another; leakage is prevented per query by requiring every candidate's
-complete target to finish before the query's 168-hour lookback begins.
+The publication-candidate profile uses a 24-hour primary knowledge-base stride
+and reports 1-, 6-, and 24-hour sensitivity results. TRACE-RAF independently
+selects its residual-memory stride from the same set using validation data;
+only that selected TRACE configuration is evaluated on the final holdout.
+Candidate records may overlap one another; leakage is prevented per query by
+requiring every candidate's complete target to finish before the query's
+168-hour lookback begins.
 
 The same run evaluates DLinear, LSTM, PatchTST, LightGBM, ridge, climatology,
 the pre-specified Event-TimeRAF variants, and TRACE-RAF (`M13`). Its no-event
@@ -94,14 +101,19 @@ flag is stored in retrieval evidence.
 After the final cell completes, download the printed
 `event_timeraf_publication_candidate_<RUN_ID>.zip`. Then attach that ZIP to a
 new Kaggle notebook and run `02_results_and_figures.ipynb` to audit the frozen
-tables without retraining. Run `03_paper_claim_verification.ipynb` on the same
-ZIP to hash-check the archive and independently recompute every reported metric,
-including the three-monitor sensitivity results.
+tables, verify every archive hash, and independently recompute the saved metrics
+without retraining. Run `03_paper_claim_verification.ipynb` on the same ZIP to
+display the exact claim-source tables and reject mixed or incomplete runs.
 
 TRACE-RAF is accepted as complete only when its residual candidates have
 out-of-fold predictions whose training targets end before the candidate input,
-the validation gate includes a zero-correction option, and Notebook 03
-reconstructs the saved prediction as `base + gate * residual_correction`.
+its residual-memory stride and correction strength are selected on validation,
+the gate includes a zero-correction option, and Notebook 02 reconstructs the
+saved prediction as `base + gate * residual_correction`.
+
+Physical AQI-threshold metrics remain unchanged. A separate operational table
+selects model-specific alert cutoffs on validation data and applies the frozen
+cutoffs to the final holdout; it never changes the regression predictions.
 
 The notebook stops at a data-readiness gate when the official records do not
 satisfy the configured coverage requirements. It never substitutes synthetic
@@ -116,6 +128,7 @@ pytest -q
 ```
 
 Install `requirements-optional.txt` for Chronos, PatchTST, and LightGBM outside
-the self-installing Kaggle notebook.
+the self-installing Kaggle notebook. `requirements-publication-lock.txt` records
+the exact successful publication-run package versions.
 
 See `structured_plan.md` for the experiment contract and leakage rules.
