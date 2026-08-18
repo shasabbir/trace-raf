@@ -74,7 +74,8 @@ evaluation:
   minimum_subset_origins: 50
   # Operational thresholds applied to each 24-hour forecast mean.
   aqi_thresholds: [35.4, 55.4]
-  probabilistic_quantiles: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+  # Chronos-Bolt is trained for this native grid; unsupported edge levels are not requested.
+  probabilistic_quantiles: [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
 
 baseline:
   neural_batch_size: 256
@@ -92,6 +93,18 @@ baseline:
   patch_d_model: 64
   patch_heads: 4
   patch_ffn_dim: 128
+
+selective_residual:
+  # Expanding-window OOF blocks cover the final half of training without using
+  # a candidate's own target to fit its baseline forecast.
+  oof_boundaries: [0.50, 0.75, 1.00]
+  gate_fit_fraction: 0.67
+  gate_strength_values: [0.0, 0.25, 0.5, 0.75, 1.0]
+  gate_max_depth: 2
+  gate_max_iter: 100
+  gate_learning_rate: 0.05
+  gate_l2_regularization: 1.0
+  residual_clip_quantile: 0.01
 
 tsfm:
   checkpoint: amazon/chronos-bolt-small

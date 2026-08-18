@@ -91,8 +91,7 @@ class EvaluationConfig:
     minimum_subset_origins: int = 50
     aqi_thresholds: tuple[float, ...] = (35.4, 55.4)
     probabilistic_quantiles: tuple[float, ...] = (
-        0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45,
-        0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95,
+        0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90,
     )
 
 
@@ -123,6 +122,18 @@ class TSFMConfig:
 
 
 @dataclass(frozen=True)
+class SelectiveResidualConfig:
+    oof_boundaries: tuple[float, ...] = (0.50, 0.75, 1.0)
+    gate_fit_fraction: float = 0.67
+    gate_strength_values: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+    gate_max_depth: int = 2
+    gate_max_iter: int = 100
+    gate_learning_rate: float = 0.05
+    gate_l2_regularization: float = 1.0
+    residual_clip_quantile: float = 0.01
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     root: Path
     name: str
@@ -137,6 +148,7 @@ class ProjectConfig:
     evaluation: EvaluationConfig
     baseline: BaselineConfig
     tsfm: TSFMConfig
+    selective_residual: SelectiveResidualConfig
 
     def validate(self) -> None:
         if self.data.start_year > self.data.end_year:
@@ -189,6 +201,11 @@ class ProjectConfig:
             raise ValueError("evaluation.probabilistic_quantiles must be unique, sorted, and within (0, 1)")
         if 0.1 not in quantiles or 0.9 not in quantiles:
             raise ValueError("evaluation.probabilistic_quantiles must include 0.1 and 0.9")
+        if min(quantiles) < 0.1 or max(quantiles) > 0.9:
+            raise ValueError(
+                "evaluation.probabilistic_quantiles must stay within the Chronos-Bolt "
+                "native [0.1, 0.9] grid"
+            )
         if self.baseline.neural_batch_size <= 0 or self.baseline.neural_max_epochs <= 0:
             raise ValueError("Neural baseline batch size and epochs must be positive")
         if self.baseline.neural_patience <= 0:
@@ -218,6 +235,38 @@ class ProjectConfig:
             raise ValueError("baseline.patch_d_model must be divisible by baseline.patch_heads")
         if self.baseline.patch_length > self.forecast.lookback:
             raise ValueError("baseline.patch_length must not exceed the forecast lookback")
+        boundaries = self.selective_residual.oof_boundaries
+        if (
+            len(boundaries) < 2
+            or tuple(sorted(set(boundaries))) != boundaries
+            or not 0 < boundaries[0] < 1
+            or boundaries[-1] != 1.0
+        ):
+            raise ValueError(
+                "selective_residual.oof_boundaries must be unique, increasing, and end at 1.0"
+            )
+        if not 0 < self.selective_residual.gate_fit_fraction < 1:
+            raise ValueError("selective_residual.gate_fit_fraction must be within (0, 1)")
+        strengths = self.selective_residual.gate_strength_values
+        if (
+            tuple(sorted(set(strengths))) != strengths
+            or not strengths
+            or strengths[0] != 0.0
+            or any(not 0 <= value <= 1 for value in strengths)
+        ):
+            raise ValueError(
+                "selective_residual.gate_strength_values must be unique, sorted, include 0, "
+                "and stay within [0, 1]"
+            )
+        if self.selective_residual.gate_max_depth <= 0 or self.selective_residual.gate_max_iter <= 0:
+            raise ValueError("selective residual gate dimensions must be positive")
+        if (
+            self.selective_residual.gate_learning_rate <= 0
+            or self.selective_residual.gate_l2_regularization < 0
+        ):
+            raise ValueError("selective residual gate optimizer settings are invalid")
+        if not 0 <= self.selective_residual.residual_clip_quantile < 0.5:
+            raise ValueError("selective_residual.residual_clip_quantile must be within [0, 0.5)")
 
 
 def _resolve(root: Path, value: str) -> Path:
@@ -255,6 +304,16 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
     evaluation["probabilistic_quantiles"] = tuple(
         float(v) for v in evaluation.get("probabilistic_quantiles", EvaluationConfig().probabilistic_quantiles)
     )
+    selective_residual = dict(raw.get("selective_residual", {}))
+    selective_residual["oof_boundaries"] = tuple(
+        float(v) for v in selective_residual.get("oof_boundaries", SelectiveResidualConfig().oof_boundaries)
+    )
+    selective_residual["gate_strength_values"] = tuple(
+        float(v)
+        for v in selective_residual.get(
+            "gate_strength_values", SelectiveResidualConfig().gate_strength_values
+        )
+    )
 
     cfg = ProjectConfig(
         root=root,
@@ -270,6 +329,7 @@ def load_config(path: str | Path, project_root: str | Path | None = None) -> Pro
         evaluation=EvaluationConfig(**evaluation),
         baseline=BaselineConfig(**raw.get("baseline", {})),
         tsfm=TSFMConfig(**tsfm),
+        selective_residual=SelectiveResidualConfig(**selective_residual),
     )
     cfg.validate()
     cfg.paths.create()

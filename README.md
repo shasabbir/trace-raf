@@ -1,8 +1,14 @@
-# Event-TimeRAF
+# TRACE-RAF / Event-TimeRAF
 
 Kaggle-oriented research implementation for event-aware, retrieval-augmented
 24-hour PM2.5 forecasting in Los Angeles County from 1 January 2019 through
 24 August 2025, the locked common-data endpoint in the official source snapshot.
+
+The proposed model is **TRACE-RAF**: Trust-gated Residual Analog Correction for
+Event-aware Retrieval-Augmented Forecasting. It retains Event-TimeRAF's audited
+event retrieval but adds a convex XGBoost-LightGBM base, expanding-window
+out-of-fold residual memory, and a bounded validation-trained gate. The name is
+a research model identifier; the repository does not claim legal registration.
 
 ## Data
 
@@ -73,7 +79,9 @@ one another; leakage is prevented per query by requiring every candidate's
 complete target to finish before the query's 168-hour lookback begins.
 
 The same run evaluates DLinear, LSTM, PatchTST, LightGBM, ridge, climatology,
-and the registered Event-TimeRAF variants. A separate three-monitor arm compares
+the pre-specified Event-TimeRAF variants, and TRACE-RAF (`M13`). Its no-event
+ablation is `A03`, while `C06` is the no-retrieval convex context ensemble. A
+separate three-monitor arm compares
 the context XGBoost and event-conditioned retrieval models while holding the
 primary weather covariates fixed; its station-to-monitor distances are recorded
 so it is interpreted as target-construction sensitivity, not spatial validation.
@@ -89,6 +97,11 @@ new Kaggle notebook and run `02_results_and_figures.ipynb` to audit the frozen
 tables without retraining. Run `03_paper_claim_verification.ipynb` on the same
 ZIP to hash-check the archive and independently recompute every reported metric,
 including the three-monitor sensitivity results.
+
+TRACE-RAF is accepted as complete only when its residual candidates have
+out-of-fold predictions whose training targets end before the candidate input,
+the validation gate includes a zero-correction option, and Notebook 03
+reconstructs the saved prediction as `base + gate * residual_correction`.
 
 The notebook stops at a data-readiness gate when the official records do not
 satisfy the configured coverage requirements. It never substitutes synthetic

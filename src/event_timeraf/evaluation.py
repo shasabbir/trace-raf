@@ -256,6 +256,81 @@ def paired_block_bootstrap_loss_difference(
     }
 
 
+def paired_masked_block_bootstrap_loss_difference(
+    actual: np.ndarray,
+    prediction_a: np.ndarray,
+    prediction_b: np.ndarray,
+    mask: np.ndarray,
+    loss: str,
+    block_length: int,
+    resamples: int,
+    seed: int,
+    confidence: float = 0.95,
+) -> dict[str, float | int]:
+    """Block-bootstrap a subset while preserving its positions on the full timeline."""
+    differential = _origin_loss_difference(actual, prediction_a, prediction_b, loss)
+    mask = np.asarray(mask, dtype=bool)
+    if mask.shape != (len(differential),):
+        raise ValueError("mask must align with forecast origins")
+    if not mask.any():
+        raise ValueError("mask must select at least one forecast origin")
+    n = len(differential)
+    if not 1 <= block_length <= n:
+        raise ValueError("block_length must be between one and the number of origins")
+    if resamples <= 0:
+        raise ValueError("resamples must be positive")
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between zero and one")
+
+    blocks_needed = int(np.ceil(n / block_length))
+    remainder = n - (blocks_needed - 1) * block_length
+
+    def circular_block_sums(values: np.ndarray, length: int) -> np.ndarray:
+        circular = np.concatenate([values, values[: block_length - 1]])
+        cumulative = np.concatenate([[0.0], np.cumsum(circular, dtype=np.float64)])
+        return cumulative[length : length + n] - cumulative[:n]
+
+    numerator = differential * mask
+    denominator = mask.astype(float)
+    full_numerator = circular_block_sums(numerator, block_length)
+    full_denominator = circular_block_sums(denominator, block_length)
+    partial_numerator = circular_block_sums(numerator, remainder)
+    partial_denominator = circular_block_sums(denominator, remainder)
+
+    rng = np.random.default_rng(seed)
+    starts = rng.integers(0, n, size=(resamples, blocks_needed))
+    if blocks_needed > 1:
+        sampled_numerator = full_numerator[starts[:, :-1]].sum(axis=1)
+        sampled_denominator = full_denominator[starts[:, :-1]].sum(axis=1)
+    else:
+        sampled_numerator = np.zeros(resamples, dtype=float)
+        sampled_denominator = np.zeros(resamples, dtype=float)
+    sampled_numerator += partial_numerator[starts[:, -1]]
+    sampled_denominator += partial_denominator[starts[:, -1]]
+    valid = sampled_denominator > 0
+    if not valid.all():
+        sampled_numerator = sampled_numerator[valid]
+        sampled_denominator = sampled_denominator[valid]
+    if len(sampled_numerator) < max(100, resamples // 2):
+        raise ValueError("Too few bootstrap samples contain the selected subset")
+    sampled_differences = sampled_numerator / sampled_denominator
+    observed = float(differential[mask].mean())
+    alpha = 1.0 - confidence
+    centered = sampled_differences - sampled_differences.mean()
+    p_value = (1.0 + np.count_nonzero(np.abs(centered) >= abs(observed))) / (
+        len(sampled_differences) + 1.0
+    )
+    return {
+        "difference": observed,
+        "ci_low": float(np.quantile(sampled_differences, alpha / 2.0)),
+        "ci_high": float(np.quantile(sampled_differences, 1.0 - alpha / 2.0)),
+        "bootstrap_p_value": float(min(1.0, p_value)),
+        "block_length": int(block_length),
+        "resamples": int(len(sampled_differences)),
+        "subset_origins": int(mask.sum()),
+    }
+
+
 def diebold_mariano_hac(
     actual: np.ndarray,
     prediction_a: np.ndarray,

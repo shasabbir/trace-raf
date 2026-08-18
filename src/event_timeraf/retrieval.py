@@ -96,6 +96,8 @@ class RetrievalResult:
     query_event_context: np.ndarray
     event_conditioning_applied: np.ndarray
     evidence: pd.DataFrame
+    selected_indices: np.ndarray | None = None
+    selection_weights: np.ndarray | None = None
 
     @property
     def valid_mask(self) -> np.ndarray:
@@ -127,6 +129,64 @@ class RetrievalResult:
                 f"{prefix}_event_conditioning_applied",
             ]
         )
+
+
+@dataclass
+class ResidualCorrectionResult:
+    correction: np.ndarray
+    spread: np.ndarray
+    candidate_count: np.ndarray
+
+    @property
+    def valid_mask(self) -> np.ndarray:
+        return np.isfinite(self.correction).all(axis=1)
+
+
+def residual_correction_from_retrieval(
+    kb: KnowledgeBase,
+    queries: WindowDataset,
+    retrieval: RetrievalResult,
+    candidate_residuals: np.ndarray,
+    epsilon: float = 1e-6,
+) -> ResidualCorrectionResult:
+    """Align out-of-fold candidate residuals to each query and aggregate them."""
+    if candidate_residuals.shape != kb.y.shape:
+        raise ValueError("Candidate residuals must match the knowledge-base targets")
+    if retrieval.selected_indices is None or retrieval.selection_weights is None:
+        raise ValueError("Retrieval selections are required for residual correction")
+    if len(retrieval.selected_indices) != len(queries.x):
+        raise ValueError("Retrieval selections do not align with query windows")
+    _, _, query_stds = normalize_windows(queries.x, epsilon)
+    horizon = candidate_residuals.shape[1]
+    correction = np.full((len(queries.x), horizon), np.nan, dtype=np.float32)
+    spread = np.full_like(correction, np.nan)
+    counts = np.zeros(len(queries.x), dtype=np.int16)
+    for query_index, selected in enumerate(retrieval.selected_indices):
+        valid_positions = selected >= 0
+        if not valid_positions.any():
+            continue
+        candidate_indices = selected[valid_positions]
+        residuals = candidate_residuals[candidate_indices]
+        finite = np.isfinite(residuals).all(axis=1)
+        if not finite.any():
+            continue
+        candidate_indices = candidate_indices[finite]
+        residuals = residuals[finite]
+        weights = retrieval.selection_weights[query_index, valid_positions][finite]
+        if not np.isfinite(weights).all() or weights.sum() <= epsilon:
+            weights = np.full(len(residuals), 1.0 / len(residuals), dtype=np.float32)
+        else:
+            weights = weights / weights.sum()
+        aligned = (
+            residuals / np.maximum(kb.input_std[candidate_indices, None], epsilon)
+        ) * query_stds[query_index]
+        value = np.average(aligned, axis=0, weights=weights)
+        correction[query_index] = value
+        spread[query_index] = np.sqrt(
+            np.average((aligned - value) ** 2, axis=0, weights=weights)
+        )
+        counts[query_index] = len(residuals)
+    return ResidualCorrectionResult(correction=correction, spread=spread, candidate_count=counts)
 
 
 def build_knowledge_base(
@@ -229,6 +289,7 @@ class HistoricalRetriever:
         method: str = "cosine",
         k: int | None = None,
         event_weight: float | None = None,
+        candidate_mask: np.ndarray | None = None,
     ) -> RetrievalResult:
         if method not in self.METHODS:
             raise ValueError(f"method must be one of {sorted(self.METHODS)}")
@@ -253,6 +314,14 @@ class HistoricalRetriever:
             queries.features[:, self.event_context_index] > self.cfg.retrieval.epsilon
         )
         event_conditioning_applied = np.zeros(n_queries, dtype=bool)
+        selected_indices = np.full((n_queries, k), -1, dtype=np.int32)
+        selection_weights = np.zeros((n_queries, k), dtype=np.float32)
+        if candidate_mask is None:
+            candidate_mask = np.ones(len(self.kb.metadata), dtype=bool)
+        else:
+            candidate_mask = np.asarray(candidate_mask, dtype=bool)
+            if candidate_mask.shape != (len(self.kb.metadata),):
+                raise ValueError("candidate_mask must align with the knowledge base")
         evidence_rows: list[dict] = []
 
         kb_target_end = pd.to_datetime(self.kb.metadata["target_end"], utc=True).to_numpy()
@@ -278,6 +347,7 @@ class HistoricalRetriever:
 
             for local_index, query_index in enumerate(range(block_start, block_end)):
                 eligible = np.flatnonzero(kb_target_end < query_input_starts[query_index])
+                eligible = eligible[candidate_mask[eligible]]
                 if eligible.size == 0:
                     continue
                 eligible_candidate_count[query_index] = eligible.size
@@ -353,6 +423,8 @@ class HistoricalRetriever:
                     else positive / positive.sum()
                 )
                 weighted_prediction[query_index] = np.average(aligned, axis=0, weights=candidate_weights)
+                selected_indices[query_index, :count] = selected
+                selection_weights[query_index, :count] = candidate_weights
                 similarities = ts_score[local_index, selected]
                 mean_similarity[query_index] = float(similarities.mean())
                 max_similarity[query_index] = float(similarities.max())
@@ -403,6 +475,8 @@ class HistoricalRetriever:
             query_event_context=query_event_context,
             event_conditioning_applied=event_conditioning_applied,
             evidence=evidence,
+            selected_indices=selected_indices,
+            selection_weights=selection_weights,
         )
 
 

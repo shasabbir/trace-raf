@@ -259,6 +259,247 @@ class DirectLightGBMForecaster:
         joblib.dump(self, path)
 
 
+@dataclass
+class ConvexForecastEnsemble:
+    """Validation-selected convex blend of two independently fitted forecasters."""
+
+    first_name: str
+    second_name: str
+
+    def __post_init__(self) -> None:
+        self.first_weight: float | None = None
+
+    @staticmethod
+    def _validate_shapes(actual: np.ndarray, first: np.ndarray, second: np.ndarray) -> None:
+        if actual.shape != first.shape or actual.shape != second.shape:
+            raise ValueError("Actual and component forecast arrays must have identical shapes")
+        if actual.ndim != 2:
+            raise ValueError("Forecast arrays must have shape [origins, horizon]")
+        if not all(np.isfinite(values).all() for values in (actual, first, second)):
+            raise ValueError("Convex ensemble inputs must be finite")
+
+    def fit(
+        self,
+        actual: np.ndarray,
+        first: np.ndarray,
+        second: np.ndarray,
+    ) -> "ConvexForecastEnsemble":
+        self._validate_shapes(actual, first, second)
+        direction = first - second
+        denominator = float(np.sum(direction * direction))
+        if denominator <= 1e-12:
+            self.first_weight = 0.5
+        else:
+            numerator = float(np.sum((actual - second) * direction))
+            self.first_weight = float(np.clip(numerator / denominator, 0.0, 1.0))
+        return self
+
+    def predict(self, first: np.ndarray, second: np.ndarray) -> np.ndarray:
+        if self.first_weight is None:
+            raise RuntimeError("Ensemble has not been fitted")
+        if first.shape != second.shape or first.ndim != 2:
+            raise ValueError("Component forecast arrays must have identical two-dimensional shapes")
+        return (
+            self.first_weight * first + (1.0 - self.first_weight) * second
+        ).astype(np.float32)
+
+    def weights(self) -> dict[str, float]:
+        if self.first_weight is None:
+            raise RuntimeError("Ensemble has not been fitted")
+        return {
+            self.first_name: self.first_weight,
+            self.second_name: 1.0 - self.first_weight,
+        }
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+
+def residual_gate_features(
+    base_prediction: np.ndarray,
+    correction: np.ndarray,
+    correction_spread: np.ndarray,
+    mean_similarity: np.ndarray,
+    max_similarity: np.ndarray,
+    candidate_count: np.ndarray,
+    eligible_candidate_count: np.ndarray,
+    selected_event_fraction: np.ndarray,
+    event_conditioning_applied: np.ndarray,
+    component_disagreement: np.ndarray,
+    drift_score: np.ndarray,
+    drift_flag: np.ndarray,
+) -> tuple[np.ndarray, list[str]]:
+    """Build compact origin-level reliability features without target information."""
+    arrays = (base_prediction, correction, correction_spread, component_disagreement)
+    if any(values.ndim != 2 for values in arrays):
+        raise ValueError("Forecast and correction inputs must be two-dimensional")
+    if any(values.shape != base_prediction.shape for values in arrays[1:]):
+        raise ValueError("Forecast and correction inputs must have identical shapes")
+    n_rows = len(base_prediction)
+    vectors = (
+        mean_similarity,
+        max_similarity,
+        candidate_count,
+        eligible_candidate_count,
+        selected_event_fraction,
+        event_conditioning_applied,
+        drift_score,
+        drift_flag,
+    )
+    if any(len(values) != n_rows for values in vectors):
+        raise ValueError("Reliability vectors must match the number of forecast origins")
+    matrix = np.column_stack(
+        [
+            base_prediction.mean(axis=1),
+            base_prediction.std(axis=1),
+            base_prediction.max(axis=1),
+            correction.mean(axis=1),
+            correction.std(axis=1),
+            np.max(np.abs(correction), axis=1),
+            correction_spread.mean(axis=1),
+            correction_spread.max(axis=1),
+            mean_similarity,
+            max_similarity,
+            np.log1p(candidate_count),
+            np.log1p(eligible_candidate_count),
+            selected_event_fraction,
+            event_conditioning_applied.astype(float),
+            component_disagreement.mean(axis=1),
+            component_disagreement.max(axis=1),
+            drift_score,
+            drift_flag.astype(float),
+        ]
+    ).astype(np.float32)
+    names = [
+        "base_mean",
+        "base_std",
+        "base_max",
+        "correction_mean",
+        "correction_std",
+        "correction_max_abs",
+        "correction_spread_mean",
+        "correction_spread_max",
+        "retrieval_mean_similarity",
+        "retrieval_max_similarity",
+        "log_candidate_count",
+        "log_eligible_candidate_count",
+        "selected_event_fraction",
+        "event_conditioning_applied",
+        "base_component_disagreement_mean",
+        "base_component_disagreement_max",
+        "drift_score",
+        "drift_flag",
+    ]
+    if not np.isfinite(matrix).all():
+        raise ValueError("Residual gate features must be finite")
+    return matrix, names
+
+
+@dataclass
+class SelectiveResidualGate:
+    """TRACE-RAF gate trained on validation-only oracle correction utility."""
+
+    cfg: ProjectConfig
+
+    def __post_init__(self) -> None:
+        self.model = None
+        self.selected_strength: float | None = None
+        self.selection_scores: dict[float, float] = {}
+        self.feature_names: list[str] = []
+
+    @staticmethod
+    def _oracle_gate(
+        actual: np.ndarray,
+        base_prediction: np.ndarray,
+        correction: np.ndarray,
+    ) -> np.ndarray:
+        residual = actual - base_prediction
+        denominator = np.sum(correction * correction, axis=1)
+        numerator = np.sum(residual * correction, axis=1)
+        return np.clip(
+            np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 1e-12),
+            0.0,
+            1.0,
+        ).astype(np.float32)
+
+    def _new_model(self):
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        settings = self.cfg.selective_residual
+        return HistGradientBoostingRegressor(
+            loss="squared_error",
+            learning_rate=settings.gate_learning_rate,
+            max_iter=settings.gate_max_iter,
+            max_depth=settings.gate_max_depth,
+            l2_regularization=settings.gate_l2_regularization,
+            random_state=self.cfg.seed,
+        )
+
+    def fit(
+        self,
+        actual: np.ndarray,
+        base_prediction: np.ndarray,
+        correction: np.ndarray,
+        reliability_features: np.ndarray,
+        feature_names: list[str] | None = None,
+    ) -> "SelectiveResidualGate":
+        if actual.shape != base_prediction.shape or actual.shape != correction.shape:
+            raise ValueError("Actual, base, and correction arrays must have identical shapes")
+        if len(actual) != len(reliability_features) or reliability_features.ndim != 2:
+            raise ValueError("Reliability features must align with forecast origins")
+        if len(actual) < 20:
+            raise ValueError("At least 20 validation origins are required for gate calibration")
+        if not all(np.isfinite(values).all() for values in (
+            actual, base_prediction, correction, reliability_features
+        )):
+            raise ValueError("Gate calibration inputs must be finite")
+        split = int(len(actual) * self.cfg.selective_residual.gate_fit_fraction)
+        split = min(max(split, 10), len(actual) - 10)
+        target = self._oracle_gate(actual, base_prediction, correction)
+        selection_model = self._new_model().fit(reliability_features[:split], target[:split])
+        gate = np.clip(selection_model.predict(reliability_features[split:]), 0.0, 1.0)
+        self.selection_scores = {}
+        for strength in self.cfg.selective_residual.gate_strength_values:
+            prediction = base_prediction[split:] + strength * gate[:, None] * correction[split:]
+            self.selection_scores[float(strength)] = float(
+                np.mean((actual[split:] - prediction) ** 2)
+            )
+        self.selected_strength = min(self.selection_scores, key=self.selection_scores.get)
+        self.model = self._new_model().fit(reliability_features, target)
+        self.feature_names = list(
+            feature_names or [f"gate_feature_{index:02d}" for index in range(reliability_features.shape[1])]
+        )
+        if len(self.feature_names) != reliability_features.shape[1]:
+            raise ValueError("Gate feature names do not match the reliability matrix")
+        return self
+
+    def gate_values(self, reliability_features: np.ndarray) -> np.ndarray:
+        if self.model is None or self.selected_strength is None:
+            raise RuntimeError("Selective residual gate has not been fitted")
+        values = np.clip(self.model.predict(reliability_features), 0.0, 1.0)
+        return (self.selected_strength * values).astype(np.float32)
+
+    def predict(
+        self,
+        base_prediction: np.ndarray,
+        correction: np.ndarray,
+        reliability_features: np.ndarray,
+    ) -> np.ndarray:
+        if base_prediction.shape != correction.shape:
+            raise ValueError("Base and correction arrays must have identical shapes")
+        if len(base_prediction) != len(reliability_features):
+            raise ValueError("Reliability features must align with forecast origins")
+        gate = self.gate_values(reliability_features)
+        return (base_prediction + gate[:, None] * correction).astype(np.float32)
+
+    def save(self, path: Path) -> None:
+        if self.model is None:
+            raise RuntimeError("Selective residual gate has not been fitted")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path)
+
+
 class NeuralWindowForecaster:
     """Deterministic train/validation wrapper for univariate neural baselines."""
 
@@ -557,6 +798,8 @@ def chronos_quantile_forecast(
         raise ValueError("quantile_levels must be non-empty and strictly within (0, 1)")
     if tuple(sorted(quantile_levels)) != tuple(quantile_levels):
         raise ValueError("quantile_levels must be sorted")
+    if min(quantile_levels) < 0.1 or max(quantile_levels) > 0.9:
+        raise ValueError("Chronos-Bolt quantile levels must stay within its native [0.1, 0.9] grid")
     use_cuda = torch.cuda.is_available()
     supports_bfloat16 = bool(
         use_cuda and hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported()
