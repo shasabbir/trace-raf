@@ -20,10 +20,16 @@ from .config import ProjectConfig
 
 
 EPA_AIRDATA_URL = "https://aqs.epa.gov/aqsweb/airdata"
-# NCEI retired direct ISD/Global Hourly delivery in 2026. These public
-# NOAA Open Data Dissemination (NODD) buckets are the official replacement.
+# NCEI retired ISD/Global Hourly updates in August 2025. The legacy NODD
+# buckets remain useful for studies ending before that cutoff; later studies
+# use GHCNh consistently across their full period.
 NOAA_ISD_HISTORY_URL = "https://noaa-isd-pds.s3.amazonaws.com/isd-history.csv"
 NOAA_GLOBAL_HOURLY_URL = "https://noaa-global-hourly-pds.s3.amazonaws.com"
+NOAA_GHCNH_URL = (
+    "https://www.ncei.noaa.gov/oa/global-historical-climatology-network/"
+    "hourly/access/by-year"
+)
+NOAA_ISD_END = pd.Timestamp("2025-08-29", tz="UTC")
 NOAA_STORM_URL = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles"
 NOAA_STORM_SOURCE_NAME = "NOAA NCEI Storm Events"
 STORM_CACHE_MANIFEST = "source_manifest.json"
@@ -430,21 +436,160 @@ def _parse_precip(series: pd.Series) -> pd.Series:
     return depth / 10.0
 
 
+def _noaa_cache_covers_required_period(
+    path: Path,
+    year: int,
+    cfg: ProjectConfig,
+    tolerance_hours: int = 48,
+) -> bool:
+    """Return whether a cached annual ISD file reaches the configured study boundary."""
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    study_start, study_end = study_bounds(cfg)
+    year_start = pd.Timestamp(f"{year}-01-01", tz="UTC")
+    year_end = pd.Timestamp(f"{year + 1}-01-01", tz="UTC")
+    required_start = max(study_start, year_start)
+    # ISD was retired at the end of August 2025. GHCNh supplies observations
+    # after this boundary, so an ISD cache must only reach the earlier of the
+    # study boundary and the official ISD endpoint.
+    required_end = min(study_end, year_end, NOAA_ISD_END)
+    if required_start >= required_end:
+        return True
+    try:
+        dates = pd.read_csv(path, usecols=["DATE"])["DATE"]
+    except (OSError, ValueError, KeyError, pd.errors.ParserError):
+        return False
+    timestamps = pd.to_datetime(dates, errors="coerce", utc=True).dropna()
+    if timestamps.empty:
+        return False
+    latest_required = required_end - pd.Timedelta(hours=1 + tolerance_hours)
+    return bool(timestamps.max() >= latest_required)
+
+
+def _ghcnh_station_id(station: pd.Series) -> str:
+    country = str(station.get("CTRY", "")).strip().upper()
+    wban = str(station.get("WBAN", "")).replace(".0", "").zfill(5)
+    if country != "US" or not wban.isdigit() or wban == "99999":
+        raise ValueError(
+            "Automatic ISD-to-GHCNh station mapping requires a US station with a WBAN identifier"
+        )
+    return f"USW000{wban}"
+
+
+def _ghcnh_to_isd_schema(raw: pd.DataFrame) -> pd.DataFrame:
+    """Convert official GHCNh PSV columns to the existing ISD parser contract."""
+    required = {"Year", "Month", "Day", "Hour", "Minute"}
+    missing = sorted(required - set(raw.columns))
+    if missing:
+        raise ValueError(f"GHCNh file is missing timestamp columns: {missing}")
+    date_parts = raw[["Year", "Month", "Day", "Hour", "Minute"]].rename(
+        columns={name: name.lower() for name in required}
+    )
+    timestamp = pd.to_datetime(date_parts, errors="coerce", utc=True)
+
+    def numeric(name: str) -> pd.Series:
+        if name not in raw:
+            return pd.Series(np.nan, index=raw.index, dtype=float)
+        values = pd.to_numeric(raw[name].replace({"T": 0, "": np.nan}), errors="coerce")
+        return values.mask(values <= -999)
+
+    def encoded(values: pd.Series, scale: float, width: int, signed: bool = False) -> pd.Series:
+        def format_value(value: float):
+            if not np.isfinite(value):
+                return pd.NA
+            scaled = int(round(value * scale))
+            if signed:
+                return f"{scaled:+0{width + 1}d},1"
+            return f"{scaled:0{width}d},1"
+
+        return values.map(format_value).astype("string")
+
+    temperature = numeric("temperature")
+    dewpoint = numeric("dew_point_temperature")
+    sea_pressure = numeric("sea_level_pressure")
+    station_pressure = numeric("station_level_pressure")
+    wind_direction = numeric("wind_direction")
+    wind_speed = numeric("wind_speed")
+    precipitation = numeric("precipitation")
+
+    direction_code = wind_direction.map(
+        lambda value: f"{int(round(value)):03d}" if np.isfinite(value) else "999"
+    )
+    speed_code = wind_speed.map(
+        lambda value: f"{int(round(value * 10)):04d}" if np.isfinite(value) else "9999"
+    )
+    wind = (direction_code + ",1,N," + speed_code + ",1").astype("string")
+    wind = wind.mask(wind_direction.isna() & wind_speed.isna())
+    precip = precipitation.map(
+        lambda value: (
+            f"01,{int(round(value * 10)):04d},1,1" if np.isfinite(value) else pd.NA
+        )
+    ).astype("string")
+
+    return pd.DataFrame(
+        {
+            "DATE": timestamp,
+            "TMP": encoded(temperature, 10, 4, signed=True),
+            "DEW": encoded(dewpoint, 10, 4, signed=True),
+            "SLP": encoded(sea_pressure, 10, 5),
+            "STP": encoded(station_pressure, 10, 5),
+            "WND": wind,
+            "AA1": precip,
+            "SOURCE_DATASET": "NOAA GHCNh",
+        }
+    ).dropna(subset=["DATE"])
+
+
+def download_noaa_ghcnh(
+    cfg: ProjectConfig,
+    station: pd.Series,
+    year: int,
+    force: bool = False,
+) -> pd.DataFrame:
+    station_id = _ghcnh_station_id(station)
+    filename = f"GHCNh_{station_id}_{year}.psv"
+    path = cfg.paths.raw / "noaa_ghcnh" / station_id / filename
+    url = f"{NOAA_GHCNH_URL}/{year}/psv/{filename}"
+    download_file(url, path, force=force)
+    frame = pd.read_csv(path, sep="|", low_memory=False)
+    frame.columns = frame.columns.astype(str).str.strip()
+    return frame
+
+
 def download_noaa_weather(cfg: ProjectConfig, station: pd.Series, force: bool = False) -> pd.DataFrame:
     station_id = f"{station['USAF']}{station['WBAN']}"
+    study_start, study_end = study_bounds(cfg)
+    if study_end > NOAA_ISD_END:
+        # Use one source across all chronological splits. Splicing GHCNh only
+        # after ISD retirement would place a source transition inside the final
+        # holdout and confound the drift analysis.
+        ghcnh_frames = [
+            _ghcnh_to_isd_schema(download_noaa_ghcnh(cfg, station, year, force=force))
+            for year in range(cfg.data.start_year, cfg.data.end_year + 1)
+        ]
+        return pd.concat(ghcnh_frames, ignore_index=True)
     cache_dir = cfg.paths.raw / "noaa_isd" / station_id
     frames: list[pd.DataFrame] = []
     for year in range(cfg.data.start_year, cfg.data.end_year + 1):
         path = cache_dir / f"{station_id}_{year}.csv"
         url = f"{NOAA_GLOBAL_HOURLY_URL}/{year}/{station_id}.csv"
         download_file(url, path, force=force)
-        frames.append(pd.read_csv(path, low_memory=False))
+        if not force and not _noaa_cache_covers_required_period(path, year, cfg):
+            # Annual NODD files can be cached while the year is still in
+            # progress. Refresh an incomplete snapshot for a later study end.
+            download_file(url, path, force=True)
+        annual = pd.read_csv(path, low_memory=False)
+        annual["SOURCE_DATASET"] = "NOAA ISD/Global Hourly"
+        frames.append(annual)
     return pd.concat(frames, ignore_index=True)
 
 
 def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
     frame = pd.DataFrame()
     frame["timestamp_utc"] = pd.to_datetime(raw["DATE"], errors="coerce", utc=True)
+    frame["weather_source"] = raw.get(
+        "SOURCE_DATASET", pd.Series("NOAA ISD/Global Hourly", index=raw.index)
+    ).fillna("unspecified")
     frame["temperature_c"] = _scaled_noaa(raw["TMP"], missing=9999)
     frame["dewpoint_c"] = _scaled_noaa(raw["DEW"], missing=9999) if "DEW" in raw else np.nan
     sea_level_pressure = _scaled_noaa(raw["SLP"], missing=99999) if "SLP" in raw else pd.Series(np.nan, index=raw.index)
@@ -477,6 +622,7 @@ def prepare_noaa_weather(raw: pd.DataFrame, cfg: ProjectConfig) -> pd.DataFrame:
             "wind_speed_ms": "mean",
             "precipitation_mm": lambda values: values.sum(min_count=1),
             "precipitation_reported": "max",
+            "weather_source": lambda values: " | ".join(sorted(set(values.dropna().astype(str)))),
         }
     )
     core_columns = [
@@ -869,6 +1015,13 @@ def build_data_audit(
         weather[["timestamp_utc", *weather_columns]], on="timestamp_utc", how="left", validate="one_to_one"
     )
     weather_coverage = float(aligned_weather[weather_columns].notna().all(axis=1).mean())
+    weather_complete = aligned_weather[weather_columns].notna().all(axis=1)
+    weather_timestamps = pd.to_datetime(aligned_weather["timestamp_utc"], utc=True)
+    weather_coverage_by_year = {
+        str(int(year)): float(weather_complete.loc[weather_timestamps.dt.year == year].mean())
+        for year in sorted(weather_timestamps.dt.year.unique())
+    }
+    complete_times = weather_timestamps.loc[weather_complete]
     raw_weather_columns = [f"{column}_observed" for column in weather_columns]
     if set(raw_weather_columns).issubset(weather.columns):
         aligned_raw_weather = pm_timeline.merge(
@@ -898,6 +1051,20 @@ def build_data_audit(
         else []
     )
     strict_event_availability = bool(availability_assumptions) and availability_assumptions == ["reported"]
+    ghcnh_id = _ghcnh_station_id(weather_station)
+    weather_source_paths = sorted(
+        (cfg.paths.raw / "noaa_ghcnh" / ghcnh_id).glob("*.psv")
+    ) + sorted(
+        (cfg.paths.raw / "noaa_isd" / f"{weather_station['USAF']}{weather_station['WBAN']}").glob("*.csv")
+    )
+    weather_source_files = [
+        {
+            "path": str(path.relative_to(cfg.root)) if path.is_relative_to(cfg.root) else str(path),
+            "bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+        for path in weather_source_paths
+    ]
     gates = {
         "pm25_coverage": observed_coverage >= cfg.data.minimum_pm25_coverage,
         "pm25_units_known_and_consistent": units_known_and_consistent,
@@ -912,7 +1079,8 @@ def build_data_audit(
         "audit_generated_at_utc": pd.Timestamp.now(tz="UTC").isoformat(),
         "source_urls": {
             "pm25": f"{EPA_AIRDATA_URL}/download_files.html",
-            "weather": "https://www.ncei.noaa.gov/products/land-based-station/integrated-surface-database",
+            "weather": "https://www.ncei.noaa.gov/products/global-historical-climatology-network-hourly",
+            "weather_legacy": "https://www.ncei.noaa.gov/products/land-based-station/integrated-surface-database",
             "events": "https://www.ncei.noaa.gov/stormevents/ftp.jsp",
         },
         "source_terms_note": "Source licenses/terms were not machine-parsed; consult each recorded source page.",
@@ -927,8 +1095,17 @@ def build_data_audit(
         "selected_weather_station": f"{weather_station['USAF']}{weather_station['WBAN']}",
         "weather_station_name": str(weather_station["STATION NAME"]),
         "weather_station_distance_km": float(weather_station["distance_km"]),
+        "weather_sources": sorted(weather["weather_source"].dropna().astype(str).unique()),
+        "weather_source_files": weather_source_files,
         "pm25_observed_coverage": observed_coverage,
         "weather_complete_coverage": weather_coverage,
+        "weather_complete_coverage_by_year": weather_coverage_by_year,
+        "weather_first_complete_time": (
+            complete_times.min().isoformat() if not complete_times.empty else None
+        ),
+        "weather_last_complete_time": (
+            complete_times.max().isoformat() if not complete_times.empty else None
+        ),
         "weather_raw_complete_coverage": raw_weather_coverage,
         "event_days": event_days,
         "event_overlap_days": event_overlap_days,

@@ -32,6 +32,7 @@ paper/*.print.html
 final_run_review/
 verification_outputs/
 submission_test/
+/tmp/
 
 # Presentation build intermediates; keep the source and PPTX.
 presentation/assets/

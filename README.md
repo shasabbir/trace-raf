@@ -19,8 +19,7 @@ a research model identifier; the repository does not claim legal registration.
 The pipeline uses source-preserving public records:
 
 - US EPA AirData/AQS hourly PM2.5 parameter 88101;
-- NOAA NCEI Global Hourly/ISD weather observations delivered through the
-  official NOAA Open Data Dissemination (NODD) public buckets;
+- NOAA NCEI GHCNh weather observations from the official annual station files;
 - NOAA Storm Events records;
 - optional NOAA HMS fire/smoke records supplied as a cached table.
 
@@ -50,6 +49,11 @@ are ignored by Git. No experimental result is bundled with this repository.
    `STORM_EVENTS_CACHE` only when automatic discovery is insufficient.
 6. Run the notebook from top to bottom with internet enabled for the first EPA
    and weather download, or attach a previously prepared `data/raw` cache.
+   NOAA retired ISD/Global Hourly in August 2025. Because this study continues
+   through December, the weather loader uses its official GHCNh replacement
+   consistently for every year rather than changing sources inside the final
+   holdout. Internet must be enabled for the first GHCNh download, or a complete
+   `data/raw/noaa_ghcnh` cache must be attached.
 7. The packaged notebook defaults to final-publication mode:
    `RUN_TSF_MODEL = True`, `FINAL_EXPERIMENT = True`, and
    `RETRIEVAL_EVIDENCE_REVIEWED = True`. It installs `chronos-forecasting` if
