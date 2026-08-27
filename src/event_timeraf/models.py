@@ -396,6 +396,101 @@ def residual_gate_features(
     return matrix, names
 
 
+def apply_residual_correction(
+    base_prediction: np.ndarray,
+    correction: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Apply a globally scaled residual analogue correction."""
+    if base_prediction.shape != correction.shape or base_prediction.ndim != 2:
+        raise ValueError("Base and correction arrays must be identically shaped matrices")
+    if not np.isfinite(base_prediction).all() or not np.isfinite(correction).all():
+        raise ValueError("Base and correction arrays must be finite")
+    strength = float(strength)
+    if not np.isfinite(strength) or not 0.0 <= strength <= 1.0:
+        raise ValueError("Residual strength must be within [0, 1]")
+    return (base_prediction + strength * correction).astype(np.float32)
+
+
+def choose_residual_strength(
+    actual: np.ndarray,
+    base_prediction: np.ndarray,
+    correction: np.ndarray,
+    strengths: tuple[float, ...],
+) -> tuple[float, dict[float, float]]:
+    """Select one global residual strength using validation MSE only."""
+    if actual.shape != base_prediction.shape or actual.shape != correction.shape:
+        raise ValueError("Actual, base, and correction arrays must have identical shapes")
+    if not strengths:
+        raise ValueError("At least one residual strength is required")
+    if not np.isfinite(actual).all():
+        raise ValueError("Actual values must be finite")
+    scores = {
+        float(strength): float(
+            np.mean(
+                (
+                    actual
+                    - apply_residual_correction(
+                        base_prediction, correction, float(strength)
+                    )
+                )
+                ** 2
+            )
+        )
+        for strength in strengths
+    }
+    return min(scores, key=scores.get), scores
+
+
+def blend_base_with_analogue(
+    base_prediction: np.ndarray,
+    analogue_prediction: np.ndarray,
+    analogue_weight: float,
+) -> np.ndarray:
+    """Convexly blend a supervised base forecast with a retrieved raw future."""
+    if base_prediction.shape != analogue_prediction.shape or base_prediction.ndim != 2:
+        raise ValueError("Base and analogue arrays must be identically shaped matrices")
+    if not np.isfinite(base_prediction).all() or not np.isfinite(analogue_prediction).all():
+        raise ValueError("Base and analogue arrays must be finite")
+    analogue_weight = float(analogue_weight)
+    if not np.isfinite(analogue_weight) or not 0.0 <= analogue_weight <= 1.0:
+        raise ValueError("Analogue weight must be within [0, 1]")
+    return (
+        (1.0 - analogue_weight) * base_prediction
+        + analogue_weight * analogue_prediction
+    ).astype(np.float32)
+
+
+def choose_analogue_weight(
+    actual: np.ndarray,
+    base_prediction: np.ndarray,
+    analogue_prediction: np.ndarray,
+    weights: tuple[float, ...],
+) -> tuple[float, dict[float, float]]:
+    """Select a raw-future fusion weight using validation MSE only."""
+    if actual.shape != base_prediction.shape or actual.shape != analogue_prediction.shape:
+        raise ValueError("Actual, base, and analogue arrays must have identical shapes")
+    if not weights:
+        raise ValueError("At least one analogue weight is required")
+    if not np.isfinite(actual).all():
+        raise ValueError("Actual values must be finite")
+    scores = {
+        float(weight): float(
+            np.mean(
+                (
+                    actual
+                    - blend_base_with_analogue(
+                        base_prediction, analogue_prediction, float(weight)
+                    )
+                )
+                ** 2
+            )
+        )
+        for weight in weights
+    }
+    return min(scores, key=scores.get), scores
+
+
 @dataclass
 class SelectiveResidualGate:
     """TRACE-RAF gate trained on validation-only oracle correction utility."""
