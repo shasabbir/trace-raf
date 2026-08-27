@@ -26,6 +26,7 @@ paper/*.out
 paper/*.synctex.gz
 paper/*.toc
 paper/*.print.html
+paper/main_access.pdf
 
 # Reproducible local exports and immutable run bundles.
 /event_timeraf_*.zip
