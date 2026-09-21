@@ -1,0 +1,4 @@
+run_id,model,origin_feature_count,future_calendar_feature_count,event_feature_count,control
+20260827T043457543402Z,M04_xgb_context,46,9,0,lower-dimensional context baseline
+20260827T043457543402Z,C04_xgb_context_event,85,9,39,observed event features
+20260827T043457543402Z,A02_xgb_matched_event_placebo,85,9,39,split-local joint row permutation of event features

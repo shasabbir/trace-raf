@@ -1,0 +1,3 @@
+run_id,model,quantile_grid,crps_quantile_approximation,mean_absolute_calibration_error,monotonicity_correction_fraction,n_points
+20260827T043457543402Z,M10_frozen_chronos,"0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90",3.187068569162881,0.01702800361336946,0.0,59040
+20260827T043457543402Z,M11_chronos_event_retrieval,"0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90",4.1195027922032335,0.1757716049382716,0.0,59040

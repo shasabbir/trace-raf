@@ -16,6 +16,9 @@ data/knowledge_base/*
 outputs/*
 !outputs/.gitkeep
 
+# Large local evidence archive; keep outside GitHub repository.
+01 output.zip
+
 paper/*.aux
 paper/*.bbl
 paper/*.blg

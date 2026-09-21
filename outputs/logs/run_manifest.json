@@ -1,0 +1,564 @@
+{
+  "run_id": "20260827T043457543402Z",
+  "project": "event_timeraf_la",
+  "seed": 42,
+  "started_at_utc": "2026-08-27T04:34:57.543402+00:00",
+  "completed_at_utc": "2026-08-27T06:38:52.313107+00:00",
+  "runtime_seconds": 7432.72812577,
+  "run_options": {
+    "force_download": false,
+    "require_events": true,
+    "strict_event_availability": false,
+    "event_availability_mode": "retrospective_event_start",
+    "storm_events_cache": null,
+    "event_delivery_modes": [
+      "ncei_bulk_download"
+    ],
+    "run_tsf_model": true,
+    "final_experiment": true,
+    "retrieval_evidence_reviewed": true,
+    "publication_artifacts_complete": true,
+    "primary_kb_stride_hours": 24,
+    "kb_stride_values": [
+      24,
+      6,
+      1
+    ],
+    "stride_model_sweep_completed": true,
+    "journal_baselines_completed": true,
+    "event_retrieval_method": "event_conditioned",
+    "event_weight_values": [
+      0.0,
+      0.2,
+      0.5,
+      0.8,
+      1.0
+    ],
+    "event_weight_model_sweep_completed": true,
+    "drift_score_mode": "two_sided",
+    "bootstrap_block_hours": 168,
+    "bootstrap_resamples": 5000,
+    "dm_hac_lags": 168,
+    "holm_adjustment": true,
+    "placebo_fusion_controls": [
+      "climatology",
+      "persistence"
+    ],
+    "aqi_thresholds": [
+      35.4,
+      55.4
+    ],
+    "probabilistic_quantiles": [
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "chronos_native_quantile_grid": true,
+    "trace_raf_completed": true,
+    "trace_mechanism_ablation_completed": true,
+    "paired_comparison_family_size_per_metric": 29,
+    "trace_raw_analogue_weight": 0.0,
+    "trace_constant_residual_strength": 0.0,
+    "trace_raf_oof_embargo_passed": true,
+    "trace_raf_residual_candidate_count": 909,
+    "trace_raf_stride_values": [
+      24,
+      6,
+      1
+    ],
+    "trace_raf_selected_residual_kb_stride_hours": 24,
+    "trace_raf_stride_selection_completed": true,
+    "trace_raf_selected_gate_strength": 0.25,
+    "explicit_final_holdout": true,
+    "development_stress_period": "january_2025",
+    "development_stress_role": "validation_only_not_final_holdout",
+    "test_start_date": "2025-08-25",
+    "aqi_validation_calibration_completed": true,
+    "matched_feature_count_control": true,
+    "site_level_sensitivity_completed": true
+  },
+  "python": "3.12.13 (main, Mar  4 2026, 09:23:07) [GCC 11.4.0]",
+  "platform": "Linux-6.12.90+-x86_64-with-glibc2.35",
+  "packages": {
+    "numpy": "2.0.2",
+    "pandas": "2.3.3",
+    "pyarrow": "24.0.0",
+    "scipy": "1.16.3",
+    "scikit-learn": "1.6.1",
+    "xgboost": "3.2.0",
+    "holidays": "0.95",
+    "matplotlib": "3.10.0",
+    "seaborn": "0.13.2",
+    "joblib": "1.5.3",
+    "torch": "2.10.0+cu128",
+    "transformers": "4.57.6",
+    "lightgbm": "4.6.0",
+    "chronos-forecasting": "2.3.1"
+  },
+  "config_path": "/kaggle/working/event_timeraf/configs/default.yaml",
+  "config_sha256": "4dcace61e1db4993b285c01902aa76f9dc2c4d5d5284b2261ae43471cc1c892e",
+  "config": {
+    "root": "/kaggle/working/event_timeraf",
+    "name": "event_timeraf_la",
+    "seed": 42,
+    "timezone": "America/Los_Angeles",
+    "paths": {
+      "raw": "/kaggle/working/event_timeraf/data/raw",
+      "processed": "/kaggle/working/event_timeraf/data/processed",
+      "knowledge_base": "/kaggle/working/event_timeraf/data/knowledge_base",
+      "outputs": "/kaggle/working/event_timeraf/outputs"
+    },
+    "data": {
+      "start_year": 2019,
+      "end_year": 2025,
+      "epa_state_code": "06",
+      "epa_county_code": "037",
+      "study_end_date": "2025-12-31",
+      "epa_parameter_code": 88101,
+      "minimum_pm25_coverage": 0.7,
+      "minimum_weather_coverage": 0.95,
+      "maximum_fill_gap_hours": 3,
+      "minimum_event_days": 30,
+      "minimum_event_overlap_days": 180,
+      "minimum_event_categories": 2,
+      "minimum_event_records_per_category": 20,
+      "noaa_weather_max_distance_km": 80
+    },
+    "forecast": {
+      "lookback": 168,
+      "horizon": 24,
+      "split_ratios": [
+        0.7,
+        0.15,
+        0.15
+      ],
+      "validation_start_date": "2024-08-25",
+      "test_start_date": "2025-08-25"
+    },
+    "retrieval": {
+      "k": 8,
+      "k_values": [
+        1,
+        4,
+        8,
+        16
+      ],
+      "kb_stride_hours": 24,
+      "kb_stride_values": [
+        24,
+        6,
+        1
+      ],
+      "event_weight_values": [
+        0.0,
+        0.2,
+        0.5,
+        0.8,
+        1.0
+      ],
+      "event_context_feature": "event_count_72h",
+      "event_stratified_fallback": "all_eligible",
+      "normalize_event_scores": true,
+      "block_size": 256,
+      "epsilon": 1e-06,
+      "weights": {
+        "time_series": 0.5,
+        "weather": 0.2,
+        "calendar": 0.1,
+        "event": 0.2
+      }
+    },
+    "drift": {
+      "recent_window_hours": 24,
+      "reference_window_hours": 168,
+      "threshold_quantile": 0.9,
+      "score_mode": "two_sided",
+      "ks_reference_size": 4096
+    },
+    "model": {
+      "params": {
+        "n_estimators": 350,
+        "max_depth": 6,
+        "learning_rate": 0.05,
+        "subsample": 0.85,
+        "colsample_bytree": 0.85,
+        "reg_lambda": 1.0,
+        "n_jobs": -1
+      }
+    },
+    "evaluation": {
+      "bootstrap_resamples": 5000,
+      "bootstrap_block_hours": 168,
+      "dm_hac_lags": 168,
+      "minimum_subset_origins": 50,
+      "aqi_thresholds": [
+        35.4,
+        55.4
+      ],
+      "probabilistic_quantiles": [
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.9
+      ]
+    },
+    "baseline": {
+      "neural_batch_size": 256,
+      "neural_max_epochs": 30,
+      "neural_patience": 5,
+      "neural_learning_rate": 0.001,
+      "neural_weight_decay": 0.0001,
+      "dlinear_moving_average": 25,
+      "lstm_hidden_size": 64,
+      "lstm_layers": 2,
+      "lstm_dropout": 0.1,
+      "patch_length": 24,
+      "patch_stride": 12,
+      "patch_layers": 3,
+      "patch_d_model": 64,
+      "patch_heads": 4,
+      "patch_ffn_dim": 128
+    },
+    "tsfm": {
+      "checkpoint": "amazon/chronos-bolt-small",
+      "batch_size": 64,
+      "fusion_weights": [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0
+      ]
+    },
+    "selective_residual": {
+      "oof_boundaries": [
+        0.5,
+        0.75,
+        1.0
+      ],
+      "gate_fit_fraction": 0.67,
+      "gate_strength_values": [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0
+      ],
+      "gate_max_depth": 2,
+      "gate_max_iter": 100,
+      "gate_learning_rate": 0.05,
+      "gate_l2_regularization": 1.0,
+      "residual_clip_quantile": 0.01
+    }
+  },
+  "git": {
+    "commit": null,
+    "dirty": null,
+    "available": false
+  },
+  "artifacts": {
+    "configs/default.yaml": {
+      "sha256": "9bcf2371769aa53dcf7bb448ef0d311f7bb7ac1721c181b96353baf6ae995cdf",
+      "bytes": 3276
+    },
+    "data/processed/window_metadata.parquet": {
+      "sha256": "f536cdaea445ae9c11faab17fd89a8cf36c92e4989af1c9d35c1f0a671dc3175",
+      "bytes": 2786763
+    },
+    "outputs/audit/data_audit.json": {
+      "sha256": "a67a219d180904267dfd56b90ada3af9d0ae12cfad79b2c65b95ba059aef1821",
+      "bytes": 7841
+    },
+    "outputs/evidence/drift_evidence.parquet": {
+      "sha256": "ce2d6670fa4acd3ac9da56dc695be3708562cc7c41ed54e5d3ae78b5a63d2846",
+      "bytes": 2454126
+    },
+    "outputs/evidence/explanations.parquet": {
+      "sha256": "acd39630393755dff5abec392a0d5ea6715ce45fb809da170ded4d75dd39911d",
+      "bytes": 577903
+    },
+    "outputs/evidence/mean_24h_feature_effects.npz": {
+      "sha256": "83f8646aa5d9035dfebed70808bbc96f45893f143032a4bf2f8042169da93f8a",
+      "bytes": 1263133
+    },
+    "outputs/evidence/retrieval_evidence.parquet": {
+      "sha256": "70577ec24197dfd5e3f045a2b0e29b0342c8dcdca416c41b022c61555bb0e326",
+      "bytes": 14836385
+    },
+    "outputs/evidence/retrieval_review_sample.csv": {
+      "sha256": "352051a99dd1bd632440b28214bcc71d5616c08f007197601af5bdd95732d38f",
+      "bytes": 19141
+    },
+    "outputs/evidence/trace_raf_retrieval_evidence.parquet": {
+      "sha256": "18620e3e954c0b135f83a626a8e30e4057ecff5f1ad237243a4b84691162974d",
+      "bytes": 6271253
+    },
+    "outputs/figures/drift_scores.png": {
+      "sha256": "1b049e16e72e6f63768e42ca59fe34eb7bb14ad3f8f3e2b6eafb0e9e0df3bab8",
+      "bytes": 173231
+    },
+    "outputs/figures/forecast_case.png": {
+      "sha256": "d33463415ff401b6b90df9bf7646f42e6fb9f2be7c1674b8ff120d2b1dcb14c1",
+      "bytes": 164836
+    },
+    "outputs/figures/forecast_event_case.png": {
+      "sha256": "9065662891fe152176c47bb57b5fa1e8a8f785561fcbc5e533000c3dcba0e954",
+      "bytes": 182122
+    },
+    "outputs/figures/mae_by_horizon.png": {
+      "sha256": "60bee5cecd9b18f0f51f52f47f6f25028c5f27a8f246bbfa52343e65ec90da28",
+      "bytes": 183698
+    },
+    "outputs/figures/mse_by_horizon.png": {
+      "sha256": "90eac25704461ee362db4a4d82cfff5360ae0999674216937eaf69fb1d0fa972",
+      "bytes": 191832
+    },
+    "outputs/figures/retrieval_diagnostics.png": {
+      "sha256": "fa8c2e36b8cb6ecab85b18fe7761385c80ab0bba46a850fa9ee7681ae175af5c",
+      "bytes": 272896
+    },
+    "outputs/logs/m12_gate_selection.json": {
+      "sha256": "00614581baa7dcc6367f96e669670a8466b8c13d4a7dd01547ac4275afec50e9",
+      "bytes": 183
+    },
+    "outputs/logs/tsfm_gate_status.json": {
+      "sha256": "b64e2231d0f63322193c4bcb467198c4272c2a3dc5483ecb914da8d102f813ac",
+      "bytes": 260
+    },
+    "outputs/predictions/event_weight_model_predictions.npz": {
+      "sha256": "48fe4a51b797ec49f18cfcfc451781fd325a8fa4b76ea926264991921c47d86a",
+      "bytes": 4392374
+    },
+    "outputs/predictions/event_weight_retrieval_predictions.npz": {
+      "sha256": "c0fc9a71c993a2b48b3490d2f8235cd260aebcad30ca05a6a01c978209ef794c",
+      "bytes": 1039846
+    },
+    "outputs/predictions/k_sensitivity_predictions.npz": {
+      "sha256": "4cced71992b9d97974f65665caf2b3880a18ddab6f179575d588a5cf2238ca90",
+      "bytes": 1630976
+    },
+    "outputs/predictions/kb_stride_model_predictions.npz": {
+      "sha256": "ac7b05fba8325a49d3548a0dabae49715a4219d5e783fbbff77917a90653dad7",
+      "bytes": 1867696
+    },
+    "outputs/predictions/kb_stride_retrieval_predictions.npz": {
+      "sha256": "9ed81378263215aa7883297375d539f2af95c505a8ffcd9a508c5defd26418fb",
+      "bytes": 1864880
+    },
+    "outputs/predictions/predictions.parquet": {
+      "sha256": "f9cfa7cbbbc12d93b78329a87a3f9a288c62c70676198e89c0cedd225fa7a661",
+      "bytes": 11037063
+    },
+    "outputs/predictions/site_level_predictions.npz": {
+      "sha256": "d4a0026c8782c3a29bc04a404727cdc9353f66efc07e7050fb39b8739a2015ac",
+      "bytes": 678159
+    },
+    "outputs/predictions/trace_raf_predictions.npz": {
+      "sha256": "f64d4df8c139da9ee570a2a50704ded94896a45ad269bad381a584e0ae0c4659",
+      "bytes": 8012136
+    },
+    "outputs/predictions/trace_raf_subset_masks.npz": {
+      "sha256": "16ce949deb01260c4c75c296cad108510a6e42303c4a767214c7abdbd8424e49",
+      "bytes": 976
+    },
+    "outputs/predictions/tsfm_predictions.npz": {
+      "sha256": "61c651999c2b5079decab8e872a3fbe51c5c8a9288491b7c8769a016e72f35db",
+      "bytes": 4899617
+    },
+    "outputs/predictions/validation_predictions.npz": {
+      "sha256": "58d9dddc8b70dd7192f53d32ead1a98d83b6e98a36c1e89fcb81e603de1a65da",
+      "bytes": 17037863
+    },
+    "outputs/tables/ablation_results.csv": {
+      "sha256": "087d8f02a45b2c26804e9c1aaf3b936d50849c438945bdead9f920a2c183f76a",
+      "bytes": 13594
+    },
+    "outputs/tables/aqi_calibrated_decision_metrics.csv": {
+      "sha256": "38b2e49bed3d460e9c25dda2dc40667435dfdb0e1e6f07f9f8a05ce2c1dc893b",
+      "bytes": 13335
+    },
+    "outputs/tables/aqi_decision_threshold_selection.csv": {
+      "sha256": "dc47f1241365588d044fbaf8e8d22ff8f7924db831c78002bab5c24558723b66",
+      "bytes": 7304
+    },
+    "outputs/tables/aqi_exceedance_metrics.csv": {
+      "sha256": "88930ee70d8e43323081b1d23be1e5dab4015011919b1ab3c3114608b43a7f3e",
+      "bytes": 11265
+    },
+    "outputs/tables/development_stress_period_metrics.csv": {
+      "sha256": "97c317a0a63e82857846bc066e306658daaa457527aa75d7fef8c285cbe767a7",
+      "bytes": 9180
+    },
+    "outputs/tables/drift_component_correlations.csv": {
+      "sha256": "e512d29fe6aaa2a490b5b6ab0480def33a25c8517f1c3df6004d1964887ded1b",
+      "bytes": 784
+    },
+    "outputs/tables/drift_component_diagnostics.csv": {
+      "sha256": "923e11b2fe0aac2079dc243f9a85b4eabbbe9500683cbd55f54fe7ef23190528",
+      "bytes": 2661
+    },
+    "outputs/tables/drift_detector_comparison.csv": {
+      "sha256": "50e1c24aacb6712199f7bfe5572c6a53321407dfd39fc87670fa6cce10e75cfe",
+      "bytes": 225
+    },
+    "outputs/tables/drift_leaf_occupancy.csv": {
+      "sha256": "de36fd46d425c2d948be101b572bc0a7644c6271411e6ea8937c914c5c249781",
+      "bytes": 5343
+    },
+    "outputs/tables/drift_period_results.csv": {
+      "sha256": "7a7444451e5db74eb25425713feb8d218cb129c026f82306b95db491c1a4e348",
+      "bytes": 9807
+    },
+    "outputs/tables/event_candidate_composition.csv": {
+      "sha256": "70ff0123c89bdfe1337638c3a10378b3351d8515e099b415f7c001ac0b7191a0",
+      "bytes": 487
+    },
+    "outputs/tables/event_category_candidate_composition.csv": {
+      "sha256": "db7241f50301288fdf4e8c78ff6b3285f58a2a038314416695e39e5decfc3971",
+      "bytes": 742
+    },
+    "outputs/tables/event_period_results.csv": {
+      "sha256": "d503548a7c9c3595888ade857fe42a191de08f130829c9fc670454b2151a931d",
+      "bytes": 8055
+    },
+    "outputs/tables/event_weight_model_sensitivity.csv": {
+      "sha256": "529073dbf549db75381e1c711e8f9197f93829e3007a8a77b31c155985e98bff",
+      "bytes": 1870
+    },
+    "outputs/tables/event_weight_sensitivity.csv": {
+      "sha256": "db1bb4de25bda1c76419e070058a9cd33c2f0879152657ddc0311e0575d83e18",
+      "bytes": 2524
+    },
+    "outputs/tables/feature_count_control_design.csv": {
+      "sha256": "a9ffadfd1c9b30de02b725e791010811ecdcbee552bb07cc58461769201db4da",
+      "bytes": 363
+    },
+    "outputs/tables/horizon_skill_vs_climatology.csv": {
+      "sha256": "7997d956416acf504e80f59f7ea45d6db9c1e0c8933f0ed91c922a16db9b7791",
+      "bytes": 81472
+    },
+    "outputs/tables/k_sensitivity_results.csv": {
+      "sha256": "8dd15f678a56772b0c8f1e9c57ec800c7a871a7f41b93d0eeacd1ff6f0224e7a",
+      "bytes": 1224
+    },
+    "outputs/tables/kb_stride_model_sensitivity.csv": {
+      "sha256": "26507a9e159609c7cb63374034ccf610819612f455fd0d1efb86a4c7268a8ef6",
+      "bytes": 1462
+    },
+    "outputs/tables/kb_stride_sensitivity.csv": {
+      "sha256": "ada289d4428b8e65a5842e2d88bd332d35a692ff79f0d86fbd34fe5cc6bf6793",
+      "bytes": 1697
+    },
+    "outputs/tables/log_scale_metrics.csv": {
+      "sha256": "7488cd70c509ead96ccb4729aa6c37749b42d0768943813c1f2a721a023795bf",
+      "bytes": 6132
+    },
+    "outputs/tables/main_results.csv": {
+      "sha256": "b4f2586e6cbe822c3e2f3dd5c323cf0b0ba4deb7456dc8a48b3f60cd374c3e9c",
+      "bytes": 6830
+    },
+    "outputs/tables/metrics.csv": {
+      "sha256": "f197c318260fe0241474ff065d0eb7e010d4df4db6898bdbff65337464ac69bf",
+      "bytes": 1232324
+    },
+    "outputs/tables/neural_baseline_training.csv": {
+      "sha256": "59efd95deebb63bf6a8465a7dc1e8a762f06d75793821118127d0c4730df63f7",
+      "bytes": 2139
+    },
+    "outputs/tables/retrieval_fusion_ablation.csv": {
+      "sha256": "1a6f2947f1fc7b3b606338ee91e23f147266cc870f92b72971b84e538651e26d",
+      "bytes": 688
+    },
+    "outputs/tables/site_level_design.csv": {
+      "sha256": "61c6ca9b0d32ecc1a2428b8222960672b69e5da0a28687492950189b307fd4db",
+      "bytes": 774
+    },
+    "outputs/tables/site_level_sensitivity.csv": {
+      "sha256": "33a8d555d2ee788af5013f44816e4b53ef2040932c3541667fea8b50739b5e18",
+      "bytes": 3011
+    },
+    "outputs/tables/site_selection_audit.csv": {
+      "sha256": "bfa50e6c705de1b0f0650fc251865012270444e1b5cf8dac25f9e23a6b4e3529",
+      "bytes": 770
+    },
+    "outputs/tables/split_protocol.csv": {
+      "sha256": "f78da05aea6ab7daf4d56bca5d0cb70dc53998d2344541f04e4e55bc9cbc2c35",
+      "bytes": 570
+    },
+    "outputs/tables/subset_counts.csv": {
+      "sha256": "ded5d8a16e4e18604c5f7f8c39fbcf357d4a87b640c36ff052d049353b36742a",
+      "bytes": 391
+    },
+    "outputs/tables/subset_target_statistics.csv": {
+      "sha256": "09dedc92c310742017dda44c9e11aefccb5e376ff0bc28cb4427b2ef436c808f",
+      "bytes": 1293
+    },
+    "outputs/tables/trace_raf_design.csv": {
+      "sha256": "7e6003307c13a42b236c4433b768f84df45f96bee6944d5d8853f8b437b65ffc",
+      "bytes": 735
+    },
+    "outputs/tables/trace_raf_gate_selection.csv": {
+      "sha256": "c21352135ee09a65e5d336c8af35d0417986fc1a685a7852bdc6901489d09938",
+      "bytes": 2128
+    },
+    "outputs/tables/trace_raf_mechanism_ablation.csv": {
+      "sha256": "0c9d69b4b25e7c667f4e1fb06dcfd4c405a5abe787790d7d76a5f63d38b595a3",
+      "bytes": 1662
+    },
+    "outputs/tables/trace_raf_oof_audit.csv": {
+      "sha256": "5af1172700ec1307cfc7959d34aad70a8c5f0227de1392ec3290f21429489f6b",
+      "bytes": 340
+    },
+    "outputs/tables/trace_raf_subset_inference.csv": {
+      "sha256": "6ccbc8ad10e8151ac24847c1c6cbe514d76b6435201003602abbd4252ce4dc3f",
+      "bytes": 2321
+    },
+    "outputs/tables/tsfm_fusion_validation.csv": {
+      "sha256": "dd00333c93b375318b7dc5795643550195d58dde3036f5a07b35e759070c1161",
+      "bytes": 263
+    },
+    "outputs/tables/tsfm_interval_metrics.csv": {
+      "sha256": "0f7ea4195d6386eb72db48df12bbda75fdf0f808e7b454babd3fafd95e1f1035",
+      "bytes": 430
+    },
+    "outputs/tables/tsfm_placebo_fusion_validation.csv": {
+      "sha256": "7bacf623b27f57c80e3691f7347cba6074528dcd49bf81c8cf644d12c2e6590e",
+      "bytes": 1121
+    },
+    "outputs/tables/tsfm_probabilistic_metrics.csv": {
+      "sha256": "f3f8ebbde77a1c1c27f7a7567dcc7560ccdd261a7d29ac46659519e1694c704b",
+      "bytes": 412
+    },
+    "outputs/tables/tsfm_quantile_calibration.csv": {
+      "sha256": "eb62b6ae4b1cd1e55c3586f47e7807f5f53bbc8466645328f8b85cdb7942e5e8",
+      "bytes": 2138
+    },
+    "outputs/tables/validation_group_faithfulness.csv": {
+      "sha256": "b185ad09ad4e3bf10ac959600961c91e569f886d2a91ea01c20213b2c83d044e",
+      "bytes": 2907
+    },
+    "outputs/tables/window_origin_attrition.csv": {
+      "sha256": "6efd06c093b164ece932ce2bfee9fb8844a2dfc4595fb416aa3fd6807b472c0c",
+      "bytes": 1018
+    }
+  },
+  "artifact_scope": "curated_results_only",
+  "excluded_artifact_groups": [
+    "outputs/models",
+    "data/knowledge_base",
+    "data/processed/* except window_metadata.parquet"
+  ],
+  "excluded_artifact_count": 35,
+  "curated_artifact_count": 71
+}

@@ -1,0 +1,4 @@
+run_id,site_id,observed_hour_coverage,train_origins,validation_origins,test_origins,knowledge_base_windows,monitor_latitude,monitor_longitude,weather_station_id,weather_station_distance_km,weather_covariate_design
+20260827T043457543402Z,06-037-1103,0.5581084604354061,17156,6359,1631,682,34.06659,-118.22688,72297023129,29.25252220730218,shared primary station; target-construction sensitivity only
+20260827T043457543402Z,06-037-4009,0.5097444922435145,11516,5638,1732,469,33.793713,-118.171019,72297023129,3.0100121119524332,shared primary station; target-construction sensitivity only
+20260827T043457543402Z,06-037-9035,0.37377786468517793,4165,2325,547,179,34.725389,-118.178601,72297023129,101.60586596976067,shared primary station; target-construction sensitivity only

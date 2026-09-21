@@ -1,0 +1,9 @@
+run_id,stage_order,stage,count,removed_since_previous,retained_fraction_of_bounded_origins,criterion
+20260827T043457543402Z,1,source_hourly_rows,61368,0,,Hourly rows in the aligned modeling table
+20260827T043457543402Z,2,bounded_candidate_origins,61177,191,1.0,Origins with a complete history/future time bound
+20260827T043457543402Z,3,chronological_split_eligible,61129,48,0.9992153914052667,Targets do not cross split boundaries
+20260827T043457543402Z,4,complete_lookback,61121,8,0.9990846233061444,No missing PM2.5 value in the 168-hour input
+20260827T043457543402Z,5,complete_observed_target,60953,168,0.9963384932245779,All 24 target values are directly observed
+20260827T043457543402Z,6,complete_origin_features,56194,4759,0.9185478202592477,All causal origin features are finite
+20260827T043457543402Z,7,complete_future_calendar,56194,0,0.9185478202592477,All known-future calendar values are finite
+20260827T043457543402Z,8,retained_windows,56194,0,0.9185478202592477,WindowDataset rows used by the experiment

@@ -1,0 +1,6 @@
+{
+  "run_id": "20260827T043457543402Z",
+  "selection_basis": "validation-only drift subsets",
+  "non_drift_source": "M04_xgb_context",
+  "drift_source": "M08_event_timeraf_no_drift"
+}

@@ -1,0 +1,228 @@
+{
+  "study_period": [
+    "2019-01-01T00:00:00+00:00",
+    "2025-12-31T23:00:00+00:00"
+  ],
+  "epa_parameter_code": 88101,
+  "audit_generated_at_utc": "2026-08-27T04:44:50.677594+00:00",
+  "source_urls": {
+    "pm25": "https://aqs.epa.gov/aqsweb/airdata/download_files.html",
+    "weather": "https://www.ncei.noaa.gov/products/global-historical-climatology-network-hourly",
+    "weather_legacy": "https://www.ncei.noaa.gov/products/land-based-station/integrated-surface-database",
+    "events": "https://www.ncei.noaa.gov/stormevents/ftp.jsp"
+  },
+  "source_terms_note": "Source licenses/terms were not machine-parsed; consult each recorded source page.",
+  "selected_epa_site": "06-037-COUNTY",
+  "selected_epa_site_aggregation_method": "county_hourly_median",
+  "selected_epa_site_observed_hours": 61353,
+  "selected_epa_site_coverage": 0.9997555729370355,
+  "selected_epa_site_source_records": 191284,
+  "pm25_units": [
+    "Micrograms/cubic meter (LC)"
+  ],
+  "pm25_sample_durations": "not provided by archive",
+  "epa_site_count": 8,
+  "selected_weather_station": "72297023129",
+  "weather_station_name": "LONG BEACH / DAUGHERTY FIELD / AIRPORT",
+  "weather_station_distance_km": 10.35909951771555,
+  "weather_sources": [
+    "",
+    "NOAA GHCNh"
+  ],
+  "weather_source_files": [
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2019.psv",
+      "bytes": 10992906,
+      "sha256": "3b9502dda63db708294e02249b4b544610364b56fdeb52465a97be4f45d21d76"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2020.psv",
+      "bytes": 11022016,
+      "sha256": "5d5cba1f39e95f7266870eeb5f589f6ede158ec5a4c6b64ff2f86c9362a0773b"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2021.psv",
+      "bytes": 11009392,
+      "sha256": "8bb661265474f9df0890b7ff5860fb20d6ddfa411e66d9f9caca17f2ba4b4854"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2022.psv",
+      "bytes": 10638891,
+      "sha256": "1115cf948671488987a21b92c1bccf55c74108c6af88218a40afa8e0b75ef0c1"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2023.psv",
+      "bytes": 11426717,
+      "sha256": "3d9b232895474a9384892af73bcdc3c80d910b6e81754faf6a020eceba08390c"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2024.psv",
+      "bytes": 12172634,
+      "sha256": "217c24d70ef1223afd741dbaef6899ca6978e400a24040f229d685b5768dab8a"
+    },
+    {
+      "path": "data/raw/noaa_ghcnh/USW00023129/GHCNh_USW00023129_2025.psv",
+      "bytes": 11457118,
+      "sha256": "435e982618a754cbbecdc16bedba52cf4143ef693e39f1b9e08fe51f305901db"
+    }
+  ],
+  "pm25_observed_coverage": 0.9997555729370355,
+  "weather_complete_coverage": 0.9923086950853865,
+  "weather_complete_coverage_by_year": {
+    "2019": 1.0,
+    "2020": 1.0,
+    "2021": 1.0,
+    "2022": 1.0,
+    "2023": 0.9809360730593607,
+    "2024": 0.9849726775956285,
+    "2025": 0.9802511415525114
+  },
+  "weather_first_complete_time": "2019-01-01T00:00:00+00:00",
+  "weather_last_complete_time": "2025-12-31T23:00:00+00:00",
+  "weather_raw_complete_coverage": 0.9881534350149915,
+  "event_days": 127,
+  "event_overlap_days": 2557,
+  "event_sources": [
+    "NOAA Storm Events"
+  ],
+  "event_delivery_modes": [
+    "ncei_bulk_download"
+  ],
+  "event_delivery_sources": [
+    "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles"
+  ],
+  "event_availability_assumptions": [
+    "event_start"
+  ],
+  "strict_event_availability": false,
+  "qualifying_event_categories": 4,
+  "event_categories": {
+    "high_wind": 82,
+    "flood": 75,
+    "other_weather": 48,
+    "heavy_rain": 30,
+    "wildfire": 10
+  },
+  "gates": {
+    "pm25_coverage": true,
+    "pm25_units_known_and_consistent": true,
+    "weather_coverage": true,
+    "event_overlap": true,
+    "event_days": true,
+    "event_categories": true
+  },
+  "processed_duplicate_counts": {
+    "pm25_timestamp": 0,
+    "weather_timestamp": 0,
+    "event_id": 0
+  },
+  "core_ready": true,
+  "event_ready": true,
+  "site_candidates": [
+    {
+      "site_id": "06-037-COUNTY",
+      "observed_hours": 61353,
+      "source_records": 191284,
+      "latitude": 33.901389,
+      "longitude": -118.178601,
+      "first_time": "2019-01-01 08:00:00+00:00",
+      "last_time": "2025-12-31 23:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.9997555729370355,
+      "aggregation_method": "county_hourly_median"
+    },
+    {
+      "site_id": "06-037-1103",
+      "observed_hours": 34250,
+      "source_records": 34250,
+      "latitude": 34.06659,
+      "longitude": -118.22688,
+      "first_time": "2022-01-01 08:00:00+00:00",
+      "last_time": "2025-12-31 23:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.5581084604354061,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-9033",
+      "observed_hours": 33753,
+      "source_records": 33753,
+      "latitude": 34.669739,
+      "longitude": -118.130511,
+      "first_time": "2019-01-01 08:00:00+00:00",
+      "last_time": "2022-12-19 20:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.5500097770825185,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-4009",
+      "observed_hours": 31282,
+      "source_records": 31282,
+      "latitude": 33.793713,
+      "longitude": -118.171019,
+      "first_time": "2022-04-01 08:00:00+00:00",
+      "last_time": "2025-12-31 21:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.5097444922435145,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-4004",
+      "observed_hours": 28345,
+      "source_records": 28345,
+      "latitude": 33.79236,
+      "longitude": -118.17533,
+      "first_time": "2019-01-01 08:00:00+00:00",
+      "last_time": "2022-05-01 07:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.4618856733150828,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-4008",
+      "observed_hours": 24163,
+      "source_records": 24163,
+      "latitude": 33.859662,
+      "longitude": -118.200707,
+      "first_time": "2019-01-01 08:00:00+00:00",
+      "last_time": "2022-01-01 07:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.3937394081606049,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-9035",
+      "observed_hours": 22938,
+      "source_records": 22938,
+      "latitude": 34.725389,
+      "longitude": -118.178601,
+      "first_time": "2023-01-01 08:00:00+00:00",
+      "last_time": "2025-12-31 23:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.37377786468517793,
+      "aggregation_method": "single_monitor"
+    },
+    {
+      "site_id": "06-037-1302",
+      "observed_hours": 16553,
+      "source_records": 16553,
+      "latitude": 33.901389,
+      "longitude": -118.205,
+      "first_time": "2024-01-01 08:00:00+00:00",
+      "last_time": "2025-12-31 23:00:00+00:00",
+      "units": "Micrograms/cubic meter (LC)",
+      "sample_durations": "not provided by archive",
+      "coverage": 0.2697334115499935,
+      "aggregation_method": "single_monitor"
+    }
+  ],
+  "event_availability_note": "NOAA Storm Events uses event start as a retrospective availability assumption. Event-aware results are sensitivity results unless strict_event_availability is true."
+}

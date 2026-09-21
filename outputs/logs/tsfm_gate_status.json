@@ -1,0 +1,10 @@
+{
+  "run_id": "20260827T043457543402Z",
+  "completed": true,
+  "checkpoint": "amazon/chronos-bolt-small",
+  "selected_fusion_weight": 0.25,
+  "placebo_fusion_weights": {
+    "P00_chronos_climatology_fusion": 0.5,
+    "P01_chronos_persistence_fusion": 0.5
+  }
+}
